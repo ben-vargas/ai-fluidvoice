@@ -76,6 +76,10 @@ enum SpeechProviderFilter: String, CaseIterable, Identifiable {
     case xai = "xAI"
 
     var id: String { self.rawValue }
+
+    static var visibleCases: [SpeechProviderFilter] {
+        Self.allCases.filter { $0 != .xai || SettingsStore.SpeechModel.grokSTTCatalogVisible }
+    }
 }
 
 enum AISettingsLayout {

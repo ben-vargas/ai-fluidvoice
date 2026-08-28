@@ -41,6 +41,41 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
         XCTAssertEqual(descriptor.model, "grok-stt")
     }
 
+    func testSpeechProviderFilterHidesXAIWhileCatalogHidden() {
+        XCTAssertFalse(SettingsStore.SpeechModel.grokSTTCatalogVisible)
+        XCTAssertTrue(SpeechProviderFilter.allCases.contains(.xai))
+        XCTAssertFalse(SpeechProviderFilter.visibleCases.contains(.xai))
+        XCTAssertEqual(
+            SpeechProviderFilter.visibleCases.map(\.rawValue),
+            ["All", "NVIDIA", "Apple", "Cohere", "OpenAI"]
+        )
+    }
+
+    func testLocalSpeechEnginesAreNotCloudEngines() {
+        let localEngines: [SettingsStore.SpeechModel] = [
+            .parakeetTDT,
+            .parakeetTDTv2,
+            .parakeetRealtime,
+            .qwen3Asr,
+            .cohereTranscribeSixBit,
+            .nemotronOffline,
+            .nemotronStreaming,
+            .nemotronStreaming320,
+            .appleSpeech,
+            .appleSpeechAnalyzer,
+            .whisperTiny,
+            .whisperBase,
+            .whisperSmall,
+            .whisperMedium,
+            .whisperLargeTurbo,
+            .whisperLarge,
+        ]
+        for model in localEngines {
+            XCTAssertFalse(model.isCloudEngine, "\(model.rawValue) must stay local")
+        }
+        XCTAssertTrue(SettingsStore.SpeechModel.grokSTT.isCloudEngine)
+    }
+
     func testGrokSTTIsNotSelectableWithoutCatalogAndCredential() {
         XCTAssertFalse(SettingsStore.SpeechModel.isGrokSTTSelectable())
         XCTAssertFalse(

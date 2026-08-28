@@ -51,7 +51,7 @@ struct CustomDictionaryView: View {
     @State private var isTrainedReplacementGlowExpanded = false
     @State private var replacementConfirmation: ReplacementConfirmation?
     @State private var composerMode: DictionaryComposerMode =
-        SettingsStore.shared.selectedSpeechModel.supportsPronunciationMatching ? .train : .manual
+        SettingsStore.shared.selectedSpeechModel.isCloudEngine ? .manual : .train
     @State private var manualTriggerDraft = ""
     @State private var manualReplacement = ""
     @State private var isYourDictionaryPresented = false
@@ -309,7 +309,6 @@ struct CustomDictionaryView: View {
             if !SettingsStore.shared.selectedSpeechModel.supportsPronunciationMatching {
                 self.pronunciationMatchingEnabled = false
                 SettingsStore.shared.pronunciationMatchingEnabled = false
-                self.composerMode = .manual
             }
             self.punctuationAutoConvertEnabled = SettingsStore.shared.autoConvertPunctuationEnabled
             self.formattingActionRules = SettingsStore.shared.spokenFormattingActionRules
@@ -504,7 +503,7 @@ struct CustomDictionaryView: View {
 
             self.voiceMatchingSettingsRow
 
-            if SettingsStore.shared.selectedSpeechModel.supportsPronunciationMatching {
+            if !SettingsStore.shared.selectedSpeechModel.isCloudEngine {
                 self.trainingRecorderPanel
             }
 
@@ -1783,7 +1782,7 @@ struct CustomDictionaryView: View {
     }
 
     private var availableComposerModes: [DictionaryComposerMode] {
-        if SettingsStore.shared.selectedSpeechModel.supportsPronunciationMatching {
+        if !SettingsStore.shared.selectedSpeechModel.isCloudEngine {
             return DictionaryComposerMode.allCases
         }
         return [.manual]
@@ -2788,7 +2787,7 @@ private enum DictionaryTrainingCopy {
     }
 }
 
-private enum DictionaryComposerMode: CaseIterable, Identifiable, Equatable {
+private enum DictionaryComposerMode: CaseIterable, Identifiable {
     case train
     case manual
 

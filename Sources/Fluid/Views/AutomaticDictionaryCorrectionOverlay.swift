@@ -602,7 +602,7 @@ private struct AutomaticDictionaryCorrectionOverlayView: View {
     private var accent: Color { self.settings.accentColor }
 
     private var supportsPronunciationTraining: Bool {
-        self.settings.selectedSpeechModel.supportsPronunciationMatching
+        !self.settings.selectedSpeechModel.isCloudEngine
     }
 
     var body: some View {
@@ -680,14 +680,7 @@ private struct AutomaticDictionaryCorrectionOverlayView: View {
 
             self.correctionPair
 
-            if !self.supportsPronunciationTraining {
-                Text("Voice training is unavailable for this speech engine. Add the correction as a replacement instead.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.58))
-            }
-
             VStack(alignment: .leading, spacing: 9) {
-                if self.supportsPronunciationTraining {
                 Text("Teach FluidVoice your pronunciation")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.94))
@@ -729,7 +722,6 @@ private struct AutomaticDictionaryCorrectionOverlayView: View {
                         accent: self.accent,
                         action: self.session.toggleCapture
                     )
-                }
                 }
             }
             .padding(10)

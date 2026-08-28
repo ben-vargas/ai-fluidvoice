@@ -56,7 +56,7 @@ extension VoiceEngineSettingsView {
                                 .foregroundStyle(self.voiceEngineSecondaryText)
                             Spacer()
                             Menu {
-                                ForEach(SpeechProviderFilter.allCases) { option in
+                                ForEach(SpeechProviderFilter.visibleCases) { option in
                                     Button(option.rawValue) {
                                         self.viewModel.providerFilter = option
                                     }
