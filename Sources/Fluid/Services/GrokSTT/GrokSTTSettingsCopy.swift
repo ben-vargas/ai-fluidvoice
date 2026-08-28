@@ -30,8 +30,4 @@ nonisolated enum GrokSTTSettingsCopy {
     static func engineSubtitle(needsCredentials: Bool) -> String {
         needsCredentials ? self.needsCredentialsSubtitle : self.configuredSubtitle
     }
-
-    static var advancedDescription: String {
-        "\(self.cardDescription) \(self.clientKeyDeviation)"
-    }
 }

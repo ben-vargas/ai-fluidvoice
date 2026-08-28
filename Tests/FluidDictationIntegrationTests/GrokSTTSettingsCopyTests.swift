@@ -22,8 +22,6 @@ final class GrokSTTSettingsCopyTests: XCTestCase {
         XCTAssertTrue(GrokSTTSettingsCopy.clientKeyDeviation.contains("proxy WebSockets"))
         XCTAssertTrue(GrokSTTSettingsCopy.clientKeyDeviation.contains("Do not paste a team-shared key"))
         XCTAssertTrue(GrokSTTSettingsCopy.sttKeyIsolation.contains("not the xAI key under AI Enhancement"))
-        XCTAssertTrue(GrokSTTSettingsCopy.advancedDescription.contains(GrokSTTSettingsCopy.cardDescription))
-        XCTAssertTrue(GrokSTTSettingsCopy.advancedDescription.contains(GrokSTTSettingsCopy.clientKeyDeviation))
     }
 
     func testEngineSubtitleDoesNotSayNotActive() {

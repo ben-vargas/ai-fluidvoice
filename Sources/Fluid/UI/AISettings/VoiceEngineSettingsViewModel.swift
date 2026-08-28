@@ -231,7 +231,7 @@ final class VoiceEngineSettingsViewModel: ObservableObject {
         case .nemotronStreaming, .nemotronStreaming320:
             return "Nemotron Speech 3.5 Streaming Capable uses NVIDIA's streaming CoreML pipeline. Supports around 40 languages with auto or manual language selection."
         case .grokSTT:
-            return GrokSTTSettingsCopy.advancedDescription
+            return GrokSTTSettingsCopy.cardDescription
         default:
             return "Whisper models support 99 languages and work on any Mac."
         }
