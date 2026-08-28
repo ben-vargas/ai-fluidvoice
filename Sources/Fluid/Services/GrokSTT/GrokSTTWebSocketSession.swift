@@ -136,7 +136,16 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
     func append(pcm16: Data) {
         self.lock.lock()
         if self.state != .streaming {
+            let state = self.state
             self.lock.unlock()
+            #if DEBUG
+            switch state {
+            case .finishing, .complete, .cancelled, .failed:
+                assertionFailure("append(pcm16:) after finish/cancel is illegal (state=\(state.rawValue))")
+            default:
+                break
+            }
+            #endif
             return
         }
         self.outbound.append(.frame(pcm16))
