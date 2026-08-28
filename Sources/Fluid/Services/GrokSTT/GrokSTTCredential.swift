@@ -45,7 +45,9 @@ nonisolated struct GrokSTTCredential: Sendable, Equatable {
     }
 }
 
-extension GrokSTTCredential: CustomDebugStringConvertible {
+extension GrokSTTCredential: CustomStringConvertible, CustomDebugStringConvertible {
+    var description: String { self.debugDescription }
+
     var debugDescription: String {
         "GrokSTTCredential(source: \(self.source.rawValue), expiresAt: \(String(describing: self.expiresAt)), accountLabel: \(self.accountLabel ?? "nil"))"
     }

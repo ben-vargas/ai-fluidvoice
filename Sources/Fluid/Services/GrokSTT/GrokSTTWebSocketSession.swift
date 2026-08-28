@@ -40,6 +40,10 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
     private var connection: (any GrokSTTWebSocketConnection)?
     private var receiveTask: Task<Void, Never>?
     private var connectStartedAt: Date?
+    private var createdAt: Date?
+    private var firstPartialAt: Date?
+    private var audioDoneAt: Date?
+    private var partialEventCount = 0
     private var audioDoneSent = false
     private var appendedFrameCount = 0
     private var didRetryUnauthorized = false
@@ -128,6 +132,8 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
             try await self.waitUntilCreated()
             return
         }
+
+        GrokSTTLog.info("session_start")
 
         do {
             try await self.connectAndWaitCreated()
@@ -296,6 +302,7 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
             }
             var request = Self.makeRequest(configuration: self.configuration, credential: credential)
             request.timeoutInterval = remaining
+            GrokSTTLog.debug(GrokSTTLog.describeRequest(request))
             do {
                 let connection = try await self.connectWithCreatedBudget(request: request)
                 self.lock.withLock {
@@ -463,20 +470,44 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
 
     private func markCreated() {
         var waiters: [CheckedContinuation<Void, Error>] = []
+        let waitMs: Int
         self.lock.lock()
         if self.state == .waitCreated || self.state == .connecting || self.state == .idle {
             self.state = .streaming
         }
+        if self.createdAt == nil {
+            self.createdAt = Date()
+        }
+        waitMs = GrokSTTLog.milliseconds(since: self.connectStartedAt)
         waiters = self.createdWaiters
         self.createdWaiters = []
         self.lock.unlock()
+        GrokSTTLog.info("transcript.created waitMs=\(waitMs)")
         waiters.forEach { $0.resume() }
     }
 
     private func recordPartial(start: Double, text: String) {
-        let snapshot: String = self.lock.withLock {
-            self.assembler.record(start: start, text: text)
-            return self.assembler.transcript
+        let snapshot: String
+        let count: Int
+        let firstByteMs: Int?
+        self.lock.lock()
+        self.partialEventCount += 1
+        count = self.partialEventCount
+        var firstByte: Int?
+        if self.firstPartialAt == nil {
+            self.firstPartialAt = Date()
+            firstByte = GrokSTTLog.milliseconds(since: self.connectStartedAt)
+        }
+        firstByteMs = firstByte
+        self.assembler.record(start: start, text: text)
+        snapshot = self.assembler.transcript
+        self.lock.unlock()
+        if let firstByteMs {
+            GrokSTTLog.info("first-byte ms=\(firstByteMs)")
+        }
+        GrokSTTLog.info("partial count=\(count)")
+        if !text.isEmpty {
+            GrokSTTLog.debug("partial text=\(GrokSTTLog.truncatedTranscript(text))")
         }
         let handler = self.onPartial
         guard !snapshot.isEmpty, let handler else { return }
@@ -486,13 +517,19 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
     }
 
     private func recordDone(text: String) {
-        let assembled: String = self.lock.withLock {
-            self.assembler.replaceWithServerText(text)
-            if self.state != .cancelled {
-                self.state = .complete
-            }
-            return self.assembler.transcript
+        let assembled: String
+        let doneMs: Int
+        let partials: Int
+        self.lock.lock()
+        self.assembler.replaceWithServerText(text)
+        if self.state != .cancelled {
+            self.state = .complete
         }
+        assembled = self.assembler.transcript
+        doneMs = GrokSTTLog.milliseconds(since: self.audioDoneAt)
+        partials = self.partialEventCount
+        self.lock.unlock()
+        GrokSTTLog.info("transcript.done ms=\(doneMs) partials=\(partials)")
         self.resumeFinishWaiters(.success(assembled))
         self.closeConnection()
     }
@@ -682,6 +719,7 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
             if self.state == .streaming || self.state == .waitCreated {
                 self.state = .finishing
             }
+            self.audioDoneAt = Date()
             self.outbound.append(.text(#"{"type":"audio.done"}"#, continuation))
             let shouldKick = !self.senderRunning
             if shouldKick {

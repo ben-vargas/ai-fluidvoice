@@ -40,6 +40,7 @@ final class GrokSTTRetryStore {
             languageCode: languageCode,
             keyterms: keyterms
         )
+        GrokSTTLog.info("retry_retained samples=\(truncated.count)")
     }
 
     func consume() -> Pending? {

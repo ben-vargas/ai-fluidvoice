@@ -24,6 +24,7 @@ nonisolated struct GrokCLIBinaryLocator: GrokCLIBinaryLocating, Sendable {
 
     func locate() throws -> URL {
         if let override = self.normalizedOverride(), self.isUsable(override) {
+            GrokSTTLog.info("binaryLocator path=\(override.path)")
             return override
         }
 
@@ -33,6 +34,7 @@ nonisolated struct GrokCLIBinaryLocator: GrokCLIBinaryLocating, Sendable {
             URL(fileURLWithPath: "/usr/local/bin/grok"),
         ]
         if let match = candidates.first(where: { self.isUsable($0) }) {
+            GrokSTTLog.info("binaryLocator path=\(match.path)")
             return match
         }
         throw GrokSTTError.grokCLINotFound

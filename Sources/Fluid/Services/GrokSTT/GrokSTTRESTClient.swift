@@ -268,6 +268,7 @@ final nonisolated class GrokSTTRESTClient: @unchecked Sendable {
         request.setValue("\(body.count)", forHTTPHeaderField: "Content-Length")
         request.httpBody = body
         request.timeoutInterval = timeout
+        GrokSTTLog.debug(GrokSTTLog.describeRequest(request))
 
         let data: Data
         let response: URLResponse
@@ -280,6 +281,7 @@ final nonisolated class GrokSTTRESTClient: @unchecked Sendable {
         guard let http = response as? HTTPURLResponse else {
             throw GrokSTTError.offline
         }
+        GrokSTTLog.info("rest status=\(http.statusCode)")
         if http.statusCode != 200 {
             throw GrokSTTError.fromHTTPStatus(http.statusCode)
         }

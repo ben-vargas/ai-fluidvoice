@@ -4868,9 +4868,8 @@ final class ASRService: ObservableObject {
         } catch {
             self.sessionTransportError = (error as? GrokSTTError) ?? .noCredentialConfigured
             self.activeStreamingSession = nil
-            DebugLogger.shared.error(
-                "GrokSTT makeStreamingSession failed: \(self.sessionTransportError?.description ?? error.localizedDescription)",
-                source: "GrokSTT"
+            GrokSTTLog.error(
+                "makeStreamingSession failed: \(self.sessionTransportError?.description ?? error.localizedDescription)"
             )
             return
         }
@@ -5121,10 +5120,7 @@ final class ASRService: ObservableObject {
         self.errorTitle = "Speech-to-text failed"
         self.errorMessage = error.errorDescription ?? "Speech-to-text failed."
         self.showError = true
-        DebugLogger.shared.error(
-            "GrokSTT failure: \(error.description)",
-            source: "GrokSTT"
-        )
+        GrokSTTLog.error("failure: \(error.description)")
     }
 
     private func appendStopTimePCMFrames(

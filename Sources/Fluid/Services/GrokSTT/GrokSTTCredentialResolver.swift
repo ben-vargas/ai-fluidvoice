@@ -64,12 +64,15 @@ final nonisolated class GrokSTTCredentialResolver: GrokSTTCredentialResolving, @
     }
 
     func resolveCredential() async throws -> GrokSTTCredential {
+        let credential: GrokSTTCredential
         switch self.dependencies.authMode() {
         case .apiKey:
-            return try self.resolveAPIKey()
+            credential = try self.resolveAPIKey()
         case .grokCLISession:
-            return try await self.resolveCLISession(allowRefresh: true)
+            credential = try await self.resolveCLISession(allowRefresh: true)
         }
+        GrokSTTLog.info("credentialSource=\(credential.source.rawValue)")
+        return credential
     }
 
     func resolveCredentialAfterUnauthorized(rejectedBearerFingerprint: String) async throws -> GrokSTTCredential {
