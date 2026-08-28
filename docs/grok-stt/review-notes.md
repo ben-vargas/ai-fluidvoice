@@ -333,3 +333,31 @@ Approved. No leftover minors.
 - **AIFF/CAF/AMR meeting files are uploaded as `application/octet-stream` and fail after the full transfer** (`Sources/Fluid/Services/GrokSTT/GrokSTTRESTClient.swift`). `MeetingTranscriptionService.supportedFileExtensions` is derived from `AVURLAsset.audiovisualTypes()`, so `.aiff`, `.caf`, `.amr` and similar are accepted by the picker. `mimeType(forFilename:)` only maps wav/mp3/m4a/aac/flac/ogg/webm and falls through to `application/octet-stream`. With `prefersNativeFileTranscription = true` those files take the native REST path and are uploaded whole before xAI decides; a rejection comes back as 400 → `.invalidAudio`. Local engines decode the same file via the chunked path. `GrokSTTError.unsupportedFile` is defined but never thrown. Not a contract violation — the design forbids a silent local fallback — but the user pays the notice, the confirm, and a full upload before finding out. Suggested: throw `.unsupportedFile` before upload when `mimeType(forFilename:)` returns `application/octet-stream`, or note in the meeting notice that some containers may be refused by xAI.
 
 - **Redundant post-read size and emptiness checks in `transcribeFile`** (`Sources/Fluid/Services/GrokSTT/GrokSTTRESTClient.swift`). Also filed as overbuilt; the post-read `data.isEmpty` / `data.count > maxFileBytes` pair was deleted in this round. Pre-read `size <= 0` / `size > maxFileBytes` guards remain so oversized files still fail before `Data(contentsOf:)`.
+
+## PR4 round 3
+
+```json
+[
+  {
+    "severity": "minor",
+    "title": "L11's live half was never executed, so native REST file upload has no network-level evidence",
+    "detail": "GrokSTTLiveFileTranscriptionTests.testL11MeetingsAudioFileNativeREST (Tests/FluidDictationIntegrationTests/GrokSTTFileTranscriptionTests.swift:68) skips unless GROK_STT_LIVE=1, and the implementer reports it was not run. Everything unit-covered about transcribeFile is client-side: the multipart shape, the original filename, and the absence of audio_format are asserted against FakeGrokSTTHTTPClient, never against api.x.ai. The specific claim that xAI accepts a container-typed upload with no audio_format (GROK-STT-DESIGN.md:1204) is the one thing only a live probe can confirm, and PR3b set a precedent of recording its probes in docs/grok-stt/probes-PR3b.md while PR4 adds no probe record. This does not block: the design frames live probes as opt-in and gates only L4 (CLI-socket), so nothing here is a required gate, and the video-not-POSTed half of L11 is fully unit-covered.",
+    "file": "Tests/FluidDictationIntegrationTests/GrokSTTFileTranscriptionTests.swift",
+    "suggestedFix": "Run the probe once with a credential and GROK_STT_LIVE=1 against the synthetic dictation_fixture.wav, and record the result in a docs/grok-stt/probes-PR4.md the way PR3b recorded L2/L4/L5/L8/L9/L10."
+  },
+  {
+    "severity": "minor",
+    "title": "videoUploadForbidden copy promises a confirm dialog that the LocalAPI surface does not have",
+    "detail": "GrokSTTError.videoUploadForbidden reads \"Video files aren't uploaded to xAI. Extracted audio can be sent after you confirm.\" (Sources/Fluid/Services/GrokSTT/GrokSTTError.swift:113-114). That is accurate for the meeting UI, which does offer the extracted-audio confirm. It is the message a LocalAPI client gets too: POST /v1/transcribe with an .mp4 goes transcribeFileForAPI -> provider.transcribeFile(at:) -> videoUploadForbidden, and InferenceAPIController returns HTTP 400 with that string plus the cloud-upload notice appended. A script author is told to \"confirm\" with no confirm surface anywhere in the API, and there is no local fallback by design. Behavior is correct (the container is never POSTed) — only the copy misdirects.",
+    "file": "Sources/Fluid/Services/GrokSTT/GrokSTTError.swift",
+    "suggestedFix": "Make the base error surface-neutral (e.g. \"Video files aren't uploaded to xAI. Send extracted audio instead.\") and let MeetingTranscriptionView supply the \"after you confirm\" half, since it is the only surface that offers the confirm."
+  },
+  {
+    "severity": "minor",
+    "title": "transcribeFile opens the meeting file twice to compute a timeout it usually caps anyway",
+    "detail": "GrokSTTRESTClient.transcribeFile resolves the timeout via Self.durationSeconds(of: fileURL) (Sources/Fluid/Services/GrokSTT/GrokSTTRESTClient.swift:161), which constructs an AVAudioFile purely to read length/sampleRate, and then immediately reads the same file again with Data(contentsOf:) at :155. For any meeting recording over 285 s the formula saturates at meetingTimeoutCap, so the extra decoder open buys nothing; for containers AVAudioFile cannot open it silently returns 0 and also yields the cap. MeetingTranscriptionService has already loaded the duration from AVAsset at that point (MeetingTranscriptionService.swift:457-465) and discards it before calling the provider.",
+    "file": "Sources/Fluid/Services/GrokSTT/GrokSTTRESTClient.swift",
+    "suggestedFix": "Thread the duration MeetingTranscriptionService already computed through provider.transcribeFile as an optional timeout, or drop durationSeconds(of:) and let the file path use meetingTimeoutCap directly."
+  }
+]
+```
