@@ -11,7 +11,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = provider
-        asr.testStreamingSessionFactory = { _ in session }
 
         let startedAt = Date()
         let outcome = await asr.start()
@@ -40,7 +39,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = makeGrokSTTProvider(session: session)
-        asr.testStreamingSessionFactory = { _ in session }
 
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
@@ -60,7 +58,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
 
         let local = StubLocalTranscriptionProvider()
         asr.testTranscriptionProviderOverride = local
-        asr.testStreamingSessionFactory = nil
         let localStart = await asr.start()
         XCTAssertEqual(localStart, .alreadyActive)
         XCTAssertEqual(asr.debugAudioBufferCount, grokPCM.count)
@@ -89,7 +86,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = provider
-        asr.testStreamingSessionFactory = { _ in session }
 
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
@@ -113,7 +109,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = provider
-        asr.testStreamingSessionFactory = { _ in session }
 
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
@@ -147,7 +142,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = makeGrokSTTProvider(session: sessionA)
-        asr.testStreamingSessionFactory = { _ in sessionA }
 
         let startA = await asr.start()
         XCTAssertEqual(startA, .started)
@@ -165,7 +159,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
 
         let sessionB = GrokSTTFakeSession(configuration: .init(transcriptOnFinish: "from-b"))
         asr.testTranscriptionProviderOverride = makeGrokSTTProvider(session: sessionB)
-        asr.testStreamingSessionFactory = { _ in sessionB }
         let startBDuringDrain = await asr.start()
         XCTAssertEqual(startBDuringDrain, .alreadyActive)
         XCTAssertTrue(asr.debugActiveStreamingSession === sessionA)
@@ -198,7 +191,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = provider
-        asr.testStreamingSessionFactory = { _ in session }
 
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
@@ -227,7 +219,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = provider
-        asr.testStreamingSessionFactory = { _ in throw GrokSTTError.offline }
 
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
@@ -265,7 +256,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = provider
-        asr.testStreamingSessionFactory = { _ in throw GrokSTTError.timeout }
 
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
@@ -284,7 +274,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = provider
-        asr.testStreamingSessionFactory = { _ in session }
 
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
@@ -308,7 +297,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = provider
-        asr.testStreamingSessionFactory = { _ in session }
 
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
@@ -344,14 +332,12 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = grok
-        asr.testStreamingSessionFactory = { _ in session }
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
         asr.debugAppendPCM([Float](repeating: 0.1, count: 1_600))
         _ = await waitUntil(timeout: 1) { asr.debugCreatedReceived }
 
         asr.testTranscriptionProviderOverride = local
-        asr.testStreamingSessionFactory = nil
 
         let text = await asr.stop()
         XCTAssertEqual(local.transcribeFinalCount, 0)
@@ -369,7 +355,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = grok
-        asr.testStreamingSessionFactory = { _ in session }
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
         asr.debugAppendPCM([Float](repeating: 0.1, count: 800))
@@ -399,7 +384,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = grok
-        asr.testStreamingSessionFactory = { _ in session }
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
         asr.debugAppendPCM([Float](repeating: 0.1, count: 800))
@@ -408,7 +392,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
 
         let local = StubLocalTranscriptionProvider()
         asr.testTranscriptionProviderOverride = local
-        asr.testStreamingSessionFactory = nil
         let localStart = await asr.start()
         XCTAssertEqual(localStart, .started)
         XCTAssertFalse(asr.hasPendingSTTRetry)
@@ -441,7 +424,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = grok
-        asr.testStreamingSessionFactory = { _ in session }
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
         asr.debugAppendPCM([Float](repeating: 0.1, count: 400))
@@ -451,7 +433,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
 
         let local = StubLocalTranscriptionProvider()
         asr.testTranscriptionProviderOverride = local
-        asr.testStreamingSessionFactory = nil
         asr.resetTranscriptionProvider()
         XCTAssertTrue(asr.debugGrokRetryStore.hasPending)
         XCTAssertTrue(asr.hasPendingSTTRetry)
@@ -472,7 +453,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = provider
-        asr.testStreamingSessionFactory = { _ in session }
 
         session.setQueuedAudioFrameCount(21)
         let startOutcome = await asr.start()
@@ -502,7 +482,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = makeGrokSTTProvider(session: delayed)
-        asr.testStreamingSessionFactory = { _ in delayed }
 
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
@@ -510,7 +489,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
 
         let next = GrokSTTFakeSession(configuration: .init(transcriptOnFinish: "new"))
         asr.testTranscriptionProviderOverride = makeGrokSTTProvider(session: next)
-        asr.testStreamingSessionFactory = { _ in next }
         let nextStart = await asr.start()
         XCTAssertEqual(nextStart, .started)
         asr.debugAppendPCM([Float](repeating: 0.1, count: 1_600))
@@ -534,7 +512,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = grok
-        asr.testStreamingSessionFactory = { _ in session }
 
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
@@ -546,7 +523,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let livePartial = asr.partialTranscription
 
         asr.testTranscriptionProviderOverride = StubLocalTranscriptionProvider()
-        asr.testStreamingSessionFactory = nil
         asr.resetTranscriptionProvider()
 
         XCTAssertTrue(asr.debugIsSessionDictation)
@@ -594,7 +570,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = grok
-        asr.testStreamingSessionFactory = { _ in session }
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
         asr.debugAppendPCM([Float](repeating: 0.1, count: 1_600))
@@ -606,7 +581,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         XCTAssertTrue(asr.debugSessionOwnerLive)
 
         asr.testTranscriptionProviderOverride = local
-        asr.testStreamingSessionFactory = nil
         asr.resetTranscriptionProvider()
         XCTAssertTrue(asr.debugIsSessionDictation)
         XCTAssertNotNil(asr.debugSessionGrokProvider)
@@ -628,7 +602,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = grok
-        asr.testStreamingSessionFactory = { _ in session }
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
         asr.debugAppendPCM([Float](repeating: 0.1, count: 800))
@@ -675,7 +648,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = makeGrokSTTProvider(session: sessionA)
-        asr.testStreamingSessionFactory = { _ in sessionA }
 
         let startA = await asr.start()
         XCTAssertEqual(startA, .started)
@@ -691,7 +663,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
 
         let sessionB = GrokSTTFakeSession(configuration: .init(transcriptOnFinish: "from-b"))
         asr.testTranscriptionProviderOverride = makeGrokSTTProvider(session: sessionB)
-        asr.testStreamingSessionFactory = { _ in sessionB }
         let startB = await asr.start()
         XCTAssertEqual(startB, .alreadyActive)
         XCTAssertTrue(asr.debugActiveStreamingSession === sessionA)
@@ -731,7 +702,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = provider
-        asr.testStreamingSessionFactory = { _ in session }
 
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
@@ -758,7 +728,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = provider
-        asr.testStreamingSessionFactory = { _ in session }
 
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
@@ -787,7 +756,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = provider
-        asr.testStreamingSessionFactory = { _ in session }
 
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
@@ -822,7 +790,6 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = grok
-        asr.testStreamingSessionFactory = { _ in session }
         let startOutcome = await asr.start()
         XCTAssertEqual(startOutcome, .started)
         let pcm = [Float](repeating: 0.22, count: 1_200)
@@ -846,6 +813,74 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         XCTAssertEqual(snapshot?.samples, pcm)
         XCTAssertEqual(snapshot?.sampleRate, 16_000)
         XCTAssertEqual(snapshot?.channels, 1)
+    }
+
+    func testStartDuringParkedRetryReturnsAlreadyActiveAndDuplicateRetryIsRejected() async {
+        let session = GrokSTTFakeSession(configuration: .init(failBeforeAudioDone: .offline))
+        let grok = makeGrokSTTProvider(configured: true, session: session)
+        grok.setRestFinalHandler { _, _ in throw GrokSTTError.offline }
+        let asr = ASRService()
+        asr.testBypassHardwareCapture = true
+        asr.testTranscriptionProviderOverride = grok
+        let startOutcome = await asr.start()
+        XCTAssertEqual(startOutcome, .started)
+        asr.debugAppendPCM([Float](repeating: 0.1, count: 800))
+        _ = await asr.stop()
+        XCTAssertTrue(asr.hasPendingSTTRetry)
+
+        let park = TestLatch()
+        grok.setRestFinalHandler { samples, _ in
+            await park.park()
+            XCTAssertEqual(samples.count, 800)
+            return ASRTranscriptionResult(text: "retried", confidence: 1)
+        }
+        let retryTask = Task { await asr.retryPendingGrokTranscription() }
+        let inFlight = await waitUntil(timeout: 1) { asr.isSTTRetryInFlight }
+        XCTAssertTrue(inFlight)
+        XCTAssertTrue(asr.isRecordingStartBlocked)
+
+        let startDuringRetry = await asr.start()
+        XCTAssertEqual(startDuringRetry, .alreadyActive)
+        XCTAssertFalse(asr.isRunning)
+
+        let duplicate = await asr.retryPendingGrokTranscription()
+        XCTAssertEqual(duplicate, "")
+
+        park.resume()
+        let text = await retryTask.value
+        XCTAssertEqual(text, ASRService.applySpokenPunctuationFormatting("retried"))
+        XCTAssertFalse(asr.isSTTRetryInFlight)
+        XCTAssertFalse(asr.isRecordingStartBlocked)
+
+        let startAfterRetry = await asr.start()
+        XCTAssertEqual(startAfterRetry, .started)
+        await asr.stopWithoutTranscription()
+    }
+
+    func testSessionTeardownReleasesSession() async {
+        weak var weakSession: GrokSTTFakeSession?
+        let provider = GrokSTTProvider(resolver: StubGrokSTTResolver())
+        provider.setSessionFactory { _ in
+            let session = GrokSTTFakeSession(configuration: .init(transcriptOnFinish: "bye"))
+            weakSession = session
+            return session
+        }
+        let asr = ASRService()
+        asr.testBypassHardwareCapture = true
+        asr.testTranscriptionProviderOverride = provider
+
+        let startOutcome = await asr.start()
+        XCTAssertEqual(startOutcome, .started)
+        XCTAssertNotNil(weakSession)
+        asr.debugAppendPCM([Float](repeating: 0.1, count: 1_600))
+        let text = await asr.stop()
+        XCTAssertEqual(text, ASRService.applySpokenPunctuationFormatting("bye"))
+
+        provider.setSessionFactory(nil)
+        // The session stores onPartial; teardown must fully retire it (no
+        // stored callback may keep the session alive).
+        let released = await waitUntil(timeout: 2) { weakSession == nil }
+        XCTAssertTrue(released)
     }
 }
 

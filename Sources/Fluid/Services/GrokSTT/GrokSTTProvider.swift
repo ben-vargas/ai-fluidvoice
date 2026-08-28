@@ -60,7 +60,12 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
             return
         }
         #endif
-        _ = try await self.resolver.resolveCredential()
+        // Credential I/O (Keychain, CLI store) must not inherit the caller's
+        // executor: ensureAsrReady invokes prepare from a MainActor task.
+        let resolver = self.resolver
+        _ = try await Task.detached {
+            try await resolver.resolveCredential()
+        }.value
     }
 
     nonisolated func transcribe(_ samples: [Float]) async throws -> ASRTranscriptionResult {

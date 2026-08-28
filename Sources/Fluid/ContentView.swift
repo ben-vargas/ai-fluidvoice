@@ -3091,11 +3091,16 @@ struct ContentView: View {
 
     private func retryLastGrokSTT() {
         Task { @MainActor in
+            // Claim before touching the overlay: a duplicate Retry must not
+            // clobber the in-flight one, and the claim blocks a new recording
+            // from starting until the retried text has been dispatched.
+            guard self.asr.beginSTTRetryDispatch() else { return }
+            defer { self.asr.endSTTRetryDispatch() }
             NotchContentState.shared.clearSTTFailure()
             self.menuBarManager.setProcessing(true)
             NotchOverlayManager.shared.updateTranscriptionText("Transcribing")
             await Task.yield()
-            let text = await self.asr.retryPendingGrokTranscription()
+            let text = await self.asr.retryPendingGrokTranscription(ownsDispatchClaim: true)
             let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else {
                 NotchContentState.shared.showSTTFailure(

@@ -34,6 +34,8 @@ nonisolated protocol StreamingTranscriptionSession: AnyObject {
     var transportError: GrokSTTError? { get }
 
     /// Fires on every non-empty assembled snapshot. Session hops to MainActor.
+    /// The session stores this closure, so it must not strongly retain the
+    /// session; the owner also clears it at teardown.
     var onPartial: (@MainActor (String) -> Void)? { get set }
 
     /// Connect + wait for `transcript.created`. Safe to call off-main.

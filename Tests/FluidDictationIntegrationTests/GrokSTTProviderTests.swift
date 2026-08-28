@@ -100,6 +100,18 @@ final class GrokSTTProviderTests: XCTestCase {
         await fulfillment(of: [finished], timeout: 2)
     }
 
+    func testEnsureAsrReadyResolvesCredentialOffMain() async throws {
+        // ensureAsrReady creates its readiness task on MainActor; the provider's
+        // credential I/O must hop off that executor internally.
+        let resolver = ThreadRecordingGrokSTTResolver()
+        let provider = GrokSTTProvider(resolver: resolver)
+        let asr = ASRService()
+        asr.testTranscriptionProviderOverride = provider
+        try await asr.ensureAsrReady()
+        XCTAssertEqual(resolver.resolveCallCount, 1)
+        XCTAssertEqual(resolver.sawMainThread, false)
+    }
+
     func testCloudEnsureAsrReadyDoesNotSetDownloading() async throws {
         let provider = makeGrokSTTProvider()
         let latch = TestLatch()
@@ -120,5 +132,39 @@ final class GrokSTTProviderTests: XCTestCase {
         try await ready.value
         XCTAssertFalse(asr.modelsExistOnDisk)
         XCTAssertFalse(asr.isDownloadingModel)
+    }
+}
+
+private final class ThreadRecordingGrokSTTResolver: GrokSTTCredentialResolving, @unchecked Sendable {
+    private let lock = NSLock()
+    private var sawMainThreadStorage: Bool?
+    private var resolveCallCountStorage = 0
+
+    var isSourceConfigured: Bool { true }
+
+    var sawMainThread: Bool? {
+        self.lock.withLock { self.sawMainThreadStorage }
+    }
+
+    var resolveCallCount: Int {
+        self.lock.withLock { self.resolveCallCountStorage }
+    }
+
+    func resolveCredential() async throws -> GrokSTTCredential {
+        self.lock.withLock {
+            self.resolveCallCountStorage += 1
+            self.sawMainThreadStorage = Thread.isMainThread
+        }
+        return GrokSTTCredential(
+            bearer: "xai-stt-test-key",
+            source: .apiKey,
+            expiresAt: nil,
+            accountLabel: "test"
+        )
+    }
+
+    func resolveCredentialAfterUnauthorized(rejectedBearerFingerprint: String) async throws -> GrokSTTCredential {
+        _ = rejectedBearerFingerprint
+        throw GrokSTTError.unauthorized
     }
 }

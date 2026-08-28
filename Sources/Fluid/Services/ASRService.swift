@@ -207,10 +207,13 @@ final class ASRService: ObservableObject {
         self.isRunning || self.isStarting
     }
 
-    /// True while a Grok session still owns capture or is finalizing stop/cancel.
-    /// New recordings must not start in this window.
+    /// True while a Grok session still owns capture or is finalizing stop/cancel,
+    /// or an STT Retry owns routing. New recordings must not start in this window.
     var isRecordingStartBlocked: Bool {
-        self.isRunningOrStarting || self.sessionOwnerLive || self.sessionStopOwnsSharedCapture
+        self.isRunningOrStarting
+            || self.sessionOwnerLive
+            || self.sessionStopOwnsSharedCapture
+            || self.isSTTRetryInFlight
     }
 
     private let audioCaptureReadinessGate = AudioCaptureReadinessGate()
@@ -292,13 +295,15 @@ final class ASRService: ObservableObject {
     private var sessionOwnerGeneration: UInt64 = 0
     /// Stop owns `audioBuffer` from `isRunning = false` until `getAll()`/`clear()`.
     private var sessionStopOwnsSharedCapture = false
+    /// An STT Retry owns routing from claim until its text has been dispatched
+    /// (or the retry failed). Serializes Retry and blocks new recordings.
+    private(set) var isSTTRetryInFlight = false
     /// Snapshot of the session-path decision at `isRunning = false`, used after stop awaits.
     private var stopUsesSessionPath = false
 
     #if DEBUG
     var testBypassHardwareCapture = false
     var testTranscriptionProviderOverride: TranscriptionProvider?
-    var testStreamingSessionFactory: ((StreamingSTTSessionConfiguration) throws -> StreamingTranscriptionSession)?
     #endif
 
     var isCloudSessionActive: Bool {
@@ -723,6 +728,7 @@ final class ASRService: ObservableObject {
             self.sessionStartTask?.cancel()
             self.sessionStartTask = nil
             self.activeStreamingSession?.cancel()
+            self.activeStreamingSession?.onPartial = nil
             self.activeStreamingSession = nil
             self.sessionTransportError = nil
             self.createdReceived = false
@@ -4856,15 +4862,7 @@ final class ASRService: ObservableObject {
         )
 
         do {
-            #if DEBUG
-            if let factory = self.testStreamingSessionFactory {
-                self.activeStreamingSession = try factory(configuration)
-            } else {
-                self.activeStreamingSession = try sessionProvider.makeStreamingSession(configuration: configuration)
-            }
-            #else
             self.activeStreamingSession = try sessionProvider.makeStreamingSession(configuration: configuration)
-            #endif
         } catch {
             self.sessionTransportError = (error as? GrokSTTError) ?? .noCredentialConfigured
             self.activeStreamingSession = nil
@@ -4876,8 +4874,10 @@ final class ASRService: ObservableObject {
         }
 
         guard let session = self.activeStreamingSession else { return }
-        session.onPartial = { [weak self, generation] text in
-            guard let self else { return }
+        // The session stores this closure; a strong `session` capture would form
+        // a retain cycle that keeps every session alive past teardown.
+        session.onPartial = { [weak self, weak session, generation] text in
+            guard let self, let session else { return }
             guard self.sessionGeneration == generation, self.activeStreamingSession === session else { return }
             self.applySessionPartial(text)
         }
@@ -5190,6 +5190,7 @@ final class ASRService: ObservableObject {
     ) async {
         if let generation, self.sessionGeneration != generation {
             originatingSession?.cancel()
+            originatingSession?.onPartial = nil
             originatingPumpTask?.cancel()
             originatingStartTask?.cancel()
             await originatingPumpTask?.value
@@ -5209,6 +5210,7 @@ final class ASRService: ObservableObject {
         // `start()` waiting for `transcript.created` does not finish merely
         // because its parent Task was cancelled.
         session?.cancel()
+        session?.onPartial = nil
         await pump?.value
         await start?.value
 
@@ -5260,7 +5262,35 @@ final class ASRService: ObservableObject {
         }
     }
 
-    func retryPendingGrokTranscription() async -> String {
+    /// Claim STT-Retry routing ownership. While claimed, `start()` returns
+    /// `.alreadyActive` and further Retry requests are rejected.
+    /// Returns false when a Retry is already in flight.
+    func beginSTTRetryDispatch() -> Bool {
+        guard !self.isSTTRetryInFlight else { return false }
+        self.isSTTRetryInFlight = true
+        return true
+    }
+
+    /// Release the STT-Retry claim once the retried text has been dispatched.
+    func endSTTRetryDispatch() {
+        self.isSTTRetryInFlight = false
+    }
+
+    /// `ownsDispatchClaim: true` requires the caller to hold the claim via
+    /// `beginSTTRetryDispatch()` and release it after dispatching the result;
+    /// that keeps ownership across insertion so a new recording cannot start
+    /// mid-dispatch and receive the old text. The default claims for the call.
+    func retryPendingGrokTranscription(ownsDispatchClaim: Bool = false) async -> String {
+        if ownsDispatchClaim {
+            assert(self.isSTTRetryInFlight, "caller must hold the claim via beginSTTRetryDispatch()")
+        } else {
+            guard self.beginSTTRetryDispatch() else { return "" }
+        }
+        defer {
+            if !ownsDispatchClaim {
+                self.endSTTRetryDispatch()
+            }
+        }
         guard let pending = self.grokRetryStore.consume() else { return "" }
         guard let provider = self.retryGrokProvider
             ?? self.sessionGrokProvider
@@ -5272,6 +5302,14 @@ final class ASRService: ObservableObject {
                 languageCode: pending.languageCode
             )
             return ""
+        }
+        // An engine switch drains the executor asynchronously; enqueueing the
+        // retry REST call before that drain lands would get it cancelled.
+        if let drain = self.providerResetDrain {
+            await drain.task.value
+            if self.providerResetDrain?.id == drain.id {
+                self.providerResetDrain = nil
+            }
         }
         do {
             let languageCode = pending.languageCode

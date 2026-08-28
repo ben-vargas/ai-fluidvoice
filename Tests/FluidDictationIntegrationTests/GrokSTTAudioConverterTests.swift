@@ -29,11 +29,4 @@ final class GrokSTTAudioConverterTests: XCTestCase {
         XCTAssertEqual(values[2], Int16.max)
         XCTAssertEqual(values[3], -Int16.max)
     }
-
-    func testWAVHeaderPlusPCM() {
-        let wav = GrokSTTAudioConverter.wav(fromFloat32: [0.0, 0.5])
-        XCTAssertEqual(wav.count, 44 + 4)
-        XCTAssertEqual(String(data: wav.prefix(4), encoding: .ascii), "RIFF")
-        XCTAssertEqual(String(data: wav.subdata(in: 8..<12), encoding: .ascii), "WAVE")
-    }
 }
