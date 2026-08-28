@@ -44,7 +44,6 @@ extension VoiceEngineSettingsView {
                             )
                             .shadow(color: self.theme.metrics.cardShadow.color.opacity(self.theme.metrics.cardShadow.opacity), radius: self.theme.metrics.cardShadow.radius, x: self.theme.metrics.cardShadow.x, y: self.theme.metrics.cardShadow.y)
                     )
-                    .layoutPriority(0)
 
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 14) {
@@ -171,7 +170,6 @@ extension VoiceEngineSettingsView {
                     }
                 }
                 .frame(minHeight: AISettingsLayout.voiceEngineModelListMinHeight, maxHeight: .infinity)
-                .layoutPriority(1)
             }
             .padding(14)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
