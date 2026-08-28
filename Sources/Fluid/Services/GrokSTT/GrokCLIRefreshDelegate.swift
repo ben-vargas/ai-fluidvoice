@@ -7,7 +7,6 @@ nonisolated struct GrokCLIProcessRequest: Equatable, Sendable {
 }
 
 nonisolated protocol GrokCLILaunchedProcess: Sendable {
-    var isRunning: Bool { get }
     func waitUntilExit() async
 }
 
@@ -25,10 +24,6 @@ final nonisolated class FoundationGrokCLIProcess: GrokCLILaunchedProcess, @unche
 
     init(_ process: Process) {
         self.process = process
-    }
-
-    var isRunning: Bool {
-        self.process.isRunning
     }
 
     func waitUntilExit() async {

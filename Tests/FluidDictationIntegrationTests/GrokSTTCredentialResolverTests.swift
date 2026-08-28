@@ -517,9 +517,5 @@ final class SpyGrokCLIProcessLauncher: GrokCLIProcessLaunching, @unchecked Senda
 }
 
 private struct ImmediateGrokCLIProcess: GrokCLILaunchedProcess {
-    var isRunning: Bool {
-        false
-    }
-
     func waitUntilExit() async {}
 }

@@ -2,22 +2,9 @@ import CryptoKit
 import Foundation
 
 /// How the user chose to authenticate Grok Speech. Explicit — never a silent fallback.
-nonisolated enum GrokSTTAuthMode: String, Sendable, CaseIterable, Identifiable, Codable, Equatable {
+nonisolated enum GrokSTTAuthMode: String, Sendable, Equatable {
     case apiKey
     case grokCLISession
-
-    var id: String {
-        self.rawValue
-    }
-
-    var displayName: String {
-        switch self {
-        case .apiKey:
-            return "API key"
-        case .grokCLISession:
-            return "Grok CLI session"
-        }
-    }
 }
 
 nonisolated enum GrokSTTCredentialSource: String, Sendable, Equatable {
