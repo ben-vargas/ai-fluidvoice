@@ -26,6 +26,8 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
         var startUntilCancelled: Bool = false
         /// Enter `streaming` before `createdDelay` elapses so stop can race the created gate.
         var enterStreamingBeforeReturn: Bool = false
+        /// Park `finish()` after it has been entered so a newer recording can start.
+        var finishPark: TestLatch? = nil
     }
 
     private let lock = NSLock()
@@ -183,6 +185,10 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
         }
 
         try await self.waitUntilCreated()
+
+        if let finishPark = self.configuration.finishPark {
+            await finishPark.park()
+        }
 
         if self.configuration.finishDelay > 0 {
             try await Task.sleep(nanoseconds: UInt64(self.configuration.finishDelay * 1_000_000_000))

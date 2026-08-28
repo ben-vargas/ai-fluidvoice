@@ -243,11 +243,16 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
 
         let local = StubLocalTranscriptionProvider()
         asr.testTranscriptionProviderOverride = local
-        XCTAssertFalse(asr.hasPendingSTTRetry)
+        XCTAssertTrue(asr.hasPendingSTTRetry)
+        grok.setRestFinalHandler { samples, _ in
+            XCTAssertEqual(samples.count, 800)
+            return ASRTranscriptionResult(text: "grok-retry", confidence: 1)
+        }
         let retried = await asr.retryPendingGrokTranscription()
-        XCTAssertEqual(retried, "")
+        XCTAssertEqual(retried, ASRService.applySpokenPunctuationFormatting("grok-retry"))
         XCTAssertEqual(local.transcribeFinalCount, 0)
-        XCTAssertTrue(asr.debugGrokRetryStore.hasPending)
+        XCTAssertFalse(asr.debugGrokRetryStore.hasPending)
+        XCTAssertFalse(asr.hasPendingSTTRetry)
     }
 
     func testLocalRecordingAfterGrokFailureClearsRetry() async {
@@ -439,6 +444,70 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         XCTAssertEqual(text, "")
         XCTAssertEqual(local.transcribeFinalCount, 0)
         XCTAssertTrue(asr.debugGrokRetryStore.hasPending)
+        XCTAssertTrue(asr.hasPendingSTTRetry)
+        XCTAssertFalse(
+            DictationOverlayStopPolicy.shouldHideOverlayOnStop(
+                isNormalRoute: true,
+                wasRewriteMode: false,
+                wasCommandMode: false,
+                isPromptTestActive: false,
+                shouldUseAIOnStop: false,
+                spokenSendEnabled: false,
+                isCloudSessionActive: asr.isCloudSessionActive,
+                hasPendingSTTRetry: asr.hasPendingSTTRetry
+            )
+        )
+
+        grok.setRestFinalHandler { samples, _ in
+            XCTAssertEqual(samples.count, 800)
+            return ASRTranscriptionResult(text: "grok-retry", confidence: 1)
+        }
+        let retried = await asr.retryPendingGrokTranscription()
+        XCTAssertEqual(retried, ASRService.applySpokenPunctuationFormatting("grok-retry"))
+        XCTAssertEqual(local.transcribeFinalCount, 0)
+        XCTAssertFalse(asr.hasPendingSTTRetry)
+    }
+
+    func testSlowStopDoesNotCancelNewerStreamingSession() async {
+        let park = TestLatch()
+        let sessionA = GrokSTTFakeSession(
+            configuration: .init(transcriptOnFinish: "from-a", finishPark: park)
+        )
+        let asr = ASRService()
+        asr.testBypassHardwareCapture = true
+        asr.testTranscriptionProviderOverride = makeGrokSTTProvider(session: sessionA)
+        asr.testStreamingSessionFactory = { _ in sessionA }
+
+        let startA = await asr.start()
+        XCTAssertEqual(startA, .started)
+        asr.debugAppendPCM([Float](repeating: 0.1, count: 1_600))
+        _ = await waitUntil(timeout: 1) { asr.debugCreatedReceived }
+
+        let stopA = Task { await asr.stop() }
+        let enteredFinish = await waitUntil(timeout: 1) { sessionA.finishCallCount > 0 }
+        XCTAssertTrue(enteredFinish)
+
+        let sessionB = GrokSTTFakeSession(configuration: .init(transcriptOnFinish: "from-b"))
+        asr.testTranscriptionProviderOverride = makeGrokSTTProvider(session: sessionB)
+        asr.testStreamingSessionFactory = { _ in sessionB }
+        let startB = await asr.start()
+        XCTAssertEqual(startB, .started)
+        XCTAssertTrue(asr.debugActiveStreamingSession === sessionB)
+        XCTAssertTrue(asr.isRunning)
+
+        park.resume()
+        let textA = await stopA.value
+        XCTAssertEqual(textA, ASRService.applySpokenPunctuationFormatting("from-a"))
+        XCTAssertTrue(asr.debugActiveStreamingSession === sessionB)
+        XCTAssertEqual(sessionB.cancelCallCount, 0)
+        XCTAssertTrue(asr.isRunning)
+        XCTAssertEqual(sessionB.finishCallCount, 0)
+
+        asr.debugAppendPCM([Float](repeating: 0.2, count: 1_600))
+        let textB = await asr.stop()
+        XCTAssertEqual(textB, ASRService.applySpokenPunctuationFormatting("from-b"))
+        XCTAssertEqual(sessionB.finishCallCount, 1)
+        XCTAssertEqual(asr.lastStopOutcome, .success)
     }
 
     func testCreatedTransitionBetweenSnapshotAndHandoffSendsEntirePCM() async {

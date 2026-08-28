@@ -119,15 +119,16 @@ final class DictationOverlayStopPolicyTests: XCTestCase {
 
         for route in routes {
             let probe = DictationSuccessfulStopProbe()
-            let dispatch = DictationSuccessfulStopDispatcher.make(
+            let dispatch = DictationSuccessfulStopDispatch(
                 transcribedText: "retried \(route.name)",
                 audioSnapshot: snapshot,
-                context: route.context
+                context: route.context,
+                didRequestOverlayHideOnStop: false
             )
             XCTAssertEqual(dispatch.intent, route.intent, route.name)
             XCTAssertEqual(dispatch.audioSnapshot?.samples, snapshot.samples, route.name)
-            XCTAssertEqual(dispatch.usesAIEnhancement, route.context.shouldUseAIOnStop, route.name)
-            XCTAssertEqual(dispatch.usesSpokenSend, route.context.spokenSendEnabled, route.name)
+            XCTAssertEqual(dispatch.context.shouldUseAIOnStop, route.context.shouldUseAIOnStop, route.name)
+            XCTAssertEqual(dispatch.context.spokenSendEnabled, route.context.spokenSendEnabled, route.name)
 
             await DictationSuccessfulStopDispatcher.invoke(
                 dispatch,

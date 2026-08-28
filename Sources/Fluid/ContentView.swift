@@ -2510,7 +2510,7 @@ struct ContentView: View {
         context: DictationStopRoutingContext,
         didRequestOverlayHideOnStop: Bool
     ) async {
-        let dispatch = DictationSuccessfulStopDispatcher.make(
+        let dispatch = DictationSuccessfulStopDispatch(
             transcribedText: transcribedText,
             audioSnapshot: audioSnapshot,
             context: context,
@@ -5205,31 +5205,9 @@ struct DictationSuccessfulStopDispatch {
     var intent: DictationSuccessfulStopIntent {
         DictationStopRoutingPolicy.intent(for: self.context)
     }
-
-    var usesAIEnhancement: Bool {
-        self.intent == .dictation && self.context.shouldUseAIOnStop
-    }
-
-    var usesSpokenSend: Bool {
-        self.intent == .dictation && self.context.spokenSendEnabled
-    }
 }
 
 enum DictationSuccessfulStopDispatcher {
-    static func make(
-        transcribedText: String,
-        audioSnapshot: DictationAudioSnapshot?,
-        context: DictationStopRoutingContext,
-        didRequestOverlayHideOnStop: Bool = false
-    ) -> DictationSuccessfulStopDispatch {
-        DictationSuccessfulStopDispatch(
-            transcribedText: transcribedText,
-            audioSnapshot: audioSnapshot,
-            context: context,
-            didRequestOverlayHideOnStop: didRequestOverlayHideOnStop
-        )
-    }
-
     static func invoke(
         _ dispatch: DictationSuccessfulStopDispatch,
         promptTest: (String) async -> Void,

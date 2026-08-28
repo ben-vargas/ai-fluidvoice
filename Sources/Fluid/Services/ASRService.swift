@@ -277,10 +277,13 @@ final class ASRService: ObservableObject {
     private var sessionTransportError: GrokSTTError?
     private var createdReceived = false
     private let grokRetryStore = GrokSTTRetryStore()
+    /// Originating Grok provider for Retry; independent of the currently selected engine.
+    private var retryGrokProvider: GrokSTTProvider?
     private var isSessionDictation = false
     private var lastGrokLanguageCode: String?
     /// Originating Grok recording is still being finalized. Reset must not steal this owner.
     private var sessionOwnerLive = false
+    private var sessionOwnerGeneration: UInt64 = 0
     private var deferredSessionReset = false
     /// Snapshot of the session-path decision at `isRunning = false`, used after stop awaits.
     private var stopUsesSessionPath = false
@@ -297,7 +300,7 @@ final class ASRService: ObservableObject {
     }
 
     var hasPendingSTTRetry: Bool {
-        self.transcriptionProvider is StreamingTranscriptionProviding && self.grokRetryStore.hasPending
+        self.grokRetryStore.hasPending
     }
     /// Stored as Any? because @available cannot be applied to stored properties
     private var _appleSpeechAnalyzerProvider: Any?
@@ -716,7 +719,7 @@ final class ASRService: ObservableObject {
             self.createdReceived = false
             self.isSessionDictation = false
             self.sessionGrokProvider = nil
-            self.grokRetryStore.clear()
+            self.clearGrokRetryStore()
             self.grokSTTProvider = nil
             if retiringPump != nil || retiringStart != nil {
                 Task {
@@ -2079,7 +2082,6 @@ final class ASRService: ObservableObject {
             }
             self.isDictionaryTrainingCaptureActive = forDictionaryTraining
             self.isRunning = true
-            self.grokRetryStore.clear()
             DebugLogger.shared.info(
                 "✅ Audio capture running after first PCM (session=\(captureSessionID))",
                 source: "ASRService"
@@ -2453,6 +2455,7 @@ final class ASRService: ObservableObject {
         self.sessionPumpGate.requestStop()
         self.stopUsesSessionPath = self.isSessionDictation
             || self.transcriptionProvider is StreamingTranscriptionProviding
+        let sessionStop = self.makeStreamingSessionStopIdentity()
         DebugLogger.shared.debug("✅ isRunning disabled", source: "ASRService")
 
         // Stop monitoring device to prevent callbacks after stop
@@ -2495,8 +2498,7 @@ final class ASRService: ObservableObject {
         DebugLogger.shared.debug("⏳ Awaiting stopStreamingTimerAndAwait()...", source: "ASRService")
         let streamingStopStartedAt = Date().timeIntervalSince1970
         await self.stopStreamingTimerAndAwait()
-        await self.sessionPumpTask?.value
-        self.sessionPumpTask = nil
+        await self.awaitCapturedSessionPump(sessionStop.pumpTask, generation: sessionStop.generation)
         self.benchmarkLog("stop_streaming_wait elapsedMs=\(self.elapsedMilliseconds(since: streamingStopStartedAt))")
         DebugLogger.shared.debug("✅ stopStreamingTimerAndAwait() completed", source: "ASRService")
 
@@ -2516,7 +2518,8 @@ final class ASRService: ObservableObject {
                 capturedPCM: capturedPCM,
                 shouldResumeMedia: shouldResumeMedia,
                 stopStartedAt: stopStartedAt,
-                useDictionaryTrainingPath: useDictionaryTrainingPath
+                useDictionaryTrainingPath: useDictionaryTrainingPath,
+                sessionStop: sessionStop
             )
         }
 
@@ -2885,6 +2888,7 @@ final class ASRService: ObservableObject {
         // CRITICAL: Set isRunning to false FIRST to signal any in-flight chunks to abort early
         self.isRunning = false
         self.sessionPumpGate.requestStop()
+        let sessionStop = self.makeStreamingSessionStopIdentity()
         self.audioCapturePipeline.setRecordingEnabled(false)
 
         // Stop monitoring device
@@ -2903,18 +2907,26 @@ final class ASRService: ObservableObject {
         // CRITICAL FIX: Await completion of streaming task AND any pending transcriptions
         // This prevents use-after-free crashes (EXC_BAD_ACCESS) when clearing buffer
         await self.stopStreamingTimerAndAwait()
-        await self.cancelStreamingSession(clearRetry: true)
-        self.endSessionOwner()
+        let ownsSession = self.sessionGeneration == sessionStop.generation
+        await self.cancelStreamingSession(
+            generation: sessionStop.generation,
+            originatingSession: sessionStop.session,
+            originatingStartTask: sessionStop.startTask,
+            originatingPumpTask: sessionStop.pumpTask,
+            clearRetry: true
+        )
+        self.endSessionOwner(generation: sessionStop.generation)
 
-        // NOW it's safe to clear the buffer
-        self.audioBuffer.clear()
-        self.partialTranscription.removeAll()
-        self.previousFullTranscription.removeAll()
-        self.lastBoostHitTerm = nil
-        self.lastProcessedSampleCount = 0
-        self.isProcessingChunk = false
-        self.skipNextChunk = false
-        self.refreshWordBoostStatus()
+        if ownsSession {
+            self.audioBuffer.clear()
+            self.partialTranscription.removeAll()
+            self.previousFullTranscription.removeAll()
+            self.lastBoostHitTerm = nil
+            self.lastProcessedSampleCount = 0
+            self.isProcessingChunk = false
+            self.skipNextChunk = false
+            self.refreshWordBoostStatus()
+        }
 
         // Resume media playback if we paused it
         if shouldResumeMedia {
@@ -4759,8 +4771,18 @@ final class ASRService: ObservableObject {
 
     // MARK: - Streaming session transcription (Grok)
 
+    private struct StreamingSessionStopIdentity {
+        let generation: UInt64
+        let session: StreamingTranscriptionSession?
+        let pumpTask: Task<Void, Never>?
+        let startTask: Task<Void, Never>?
+        let sentCursor: Int
+        let stickyError: GrokSTTError?
+        let grokProvider: GrokSTTProvider?
+    }
+
     private func startTranscriptionAfterCaptureBegan(forDictionaryTraining: Bool) {
-        self.grokRetryStore.clear()
+        self.clearGrokRetryStore()
         if forDictionaryTraining {
             DebugLogger.shared.debug("⏸️ Skipping session/streaming for dictionary training sample", source: "ASRService")
         } else if self.transcriptionProvider is StreamingTranscriptionProviding {
@@ -4779,7 +4801,6 @@ final class ASRService: ObservableObject {
     }
 
     private func startSessionTranscription() {
-        self.grokRetryStore.clear()
         self.sessionTransportError = nil
         self.createdReceived = false
         self.isSessionDictation = true
@@ -4789,6 +4810,7 @@ final class ASRService: ObservableObject {
         self.sessionGrokProvider = self.transcriptionProvider as? GrokSTTProvider
         self.sessionGeneration &+= 1
         let generation = self.sessionGeneration
+        self.sessionOwnerGeneration = generation
         let gate = GrokSTTSessionPumpGate()
         self.sessionPumpGate = gate
         gate.begin()
@@ -4882,41 +4904,49 @@ final class ASRService: ObservableObject {
         capturedPCM: [Float],
         shouldResumeMedia: Bool,
         stopStartedAt: TimeInterval,
-        useDictionaryTrainingPath: Bool
+        useDictionaryTrainingPath: Bool,
+        sessionStop: StreamingSessionStopIdentity
     ) async -> String {
         let result = await self.finishSessionTranscriptionBody(
             capturedPCM: capturedPCM,
             stopStartedAt: stopStartedAt,
-            useDictionaryTrainingPath: useDictionaryTrainingPath
+            useDictionaryTrainingPath: useDictionaryTrainingPath,
+            sessionStop: sessionStop
         )
         if shouldResumeMedia {
             await MediaPlaybackService.shared.resumeIfWePaused(true)
         }
-        self.endSessionOwner()
+        self.endSessionOwner(generation: sessionStop.generation)
         return result
     }
 
     private func finishSessionTranscriptionBody(
         capturedPCM: [Float],
         stopStartedAt: TimeInterval,
-        useDictionaryTrainingPath: Bool
+        useDictionaryTrainingPath: Bool,
+        sessionStop: StreamingSessionStopIdentity
     ) async -> String {
-        let session = self.activeStreamingSession
-        let sticky = self.sessionTransportError ?? session?.transportError
-        let gateSnapshot = self.sessionPumpGate.snapshot
-        let sentCursor = gateSnapshot.sentCursor
+        let session = sessionStop.session
+        let sticky = sessionStop.stickyError ?? session?.transportError
+        let sentCursor = sessionStop.sentCursor
 
         if capturedPCM.isEmpty && (session?.transcript ?? "").isEmpty && sticky == nil {
-            await self.cancelStreamingSession(clearRetry: false)
-            self.lastStopOutcome = .empty
-            self.benchmarkLog("stop_end result=empty totalMs=\(self.elapsedMilliseconds(since: stopStartedAt)) reason=no_audio")
+            let ownsSession = self.stillOwnsStreamingSession(sessionStop.generation)
+            await self.cancelStreamingSession(identity: sessionStop, clearRetry: false)
+            if ownsSession {
+                self.lastStopOutcome = .empty
+                self.benchmarkLog("stop_end result=empty totalMs=\(self.elapsedMilliseconds(since: stopStartedAt)) reason=no_audio")
+            }
             return ""
         }
 
         if useDictionaryTrainingPath {
-            await self.cancelStreamingSession(clearRetry: true)
-            self.surfaceGrokError(.dictionaryTrainingUnsupported)
-            self.lastStopOutcome = .failed
+            let ownsSession = self.stillOwnsStreamingSession(sessionStop.generation)
+            await self.cancelStreamingSession(identity: sessionStop, clearRetry: true)
+            if ownsSession {
+                self.surfaceGrokError(.dictionaryTrainingUnsupported)
+                self.lastStopOutcome = .failed
+            }
             return ""
         }
 
@@ -4925,7 +4955,8 @@ final class ASRService: ObservableObject {
             return await self.completeSessionWithRESTOrRetry(
                 capturedPCM: capturedPCM,
                 error: sticky ?? .noCredentialConfigured,
-                stopStartedAt: stopStartedAt
+                stopStartedAt: stopStartedAt,
+                sessionStop: sessionStop
             )
         }
 
@@ -4951,44 +4982,51 @@ final class ASRService: ObservableObject {
             return await self.completeSessionWithRESTOrRetry(
                 capturedPCM: capturedPCM,
                 error: grokError,
-                stopStartedAt: stopStartedAt
+                stopStartedAt: stopStartedAt,
+                sessionStop: sessionStop
             )
         }
 
-        await self.cancelStreamingSession(clearRetry: false)
+        let ownsSession = self.stillOwnsStreamingSession(sessionStop.generation)
+        await self.cancelStreamingSession(identity: sessionStop, clearRetry: false)
 
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty {
             let outputText = ASRService.applySpokenPunctuationFormatting(
                 ASRService.applyCustomDictionary(ASRService.removeFillerWords(text))
             )
-            self.recordSuccessfulSessionStop(outputText: outputText, capturedPCM: capturedPCM, stopStartedAt: stopStartedAt)
+            if ownsSession {
+                self.recordSuccessfulSessionStop(outputText: outputText, capturedPCM: capturedPCM, stopStartedAt: stopStartedAt)
+            }
             return outputText
         }
 
         return await self.completeSessionWithRESTOrRetry(
             capturedPCM: capturedPCM,
             error: .emptyTranscript,
-            stopStartedAt: stopStartedAt
+            stopStartedAt: stopStartedAt,
+            sessionStop: sessionStop
         )
     }
 
     private func completeSessionWithRESTOrRetry(
         capturedPCM: [Float],
         error: GrokSTTError,
-        stopStartedAt: TimeInterval
+        stopStartedAt: TimeInterval,
+        sessionStop: StreamingSessionStopIdentity
     ) async -> String {
-        let grokProvider = self.sessionGrokProvider ?? (self.transcriptionProvider as? GrokSTTProvider)
-        await self.cancelStreamingSession(clearRetry: false)
+        let grokProvider = sessionStop.grokProvider
+            ?? self.sessionGrokProvider
+            ?? (self.transcriptionProvider as? GrokSTTProvider)
+        let ownsSession = self.stillOwnsStreamingSession(sessionStop.generation)
+        await self.cancelStreamingSession(identity: sessionStop, clearRetry: false)
         guard let provider = grokProvider, provider.isReady else {
-            self.grokRetryStore.retain(
-                samples: capturedPCM,
-                error: error,
-                languageCode: self.lastGrokLanguageCode
-            )
-            self.surfaceGrokError(error)
-            self.lastStopOutcome = .failed
-            self.benchmarkLog("stop_end result=error totalMs=\(self.elapsedMilliseconds(since: stopStartedAt)) error=\(error.description)")
+            if ownsSession {
+                self.retainGrokRetry(samples: capturedPCM, error: error, provider: grokProvider)
+                self.surfaceGrokError(error)
+                self.lastStopOutcome = .failed
+                self.benchmarkLog("stop_end result=error totalMs=\(self.elapsedMilliseconds(since: stopStartedAt)) error=\(error.description)")
+            }
             return ""
         }
         do {
@@ -5000,30 +5038,28 @@ final class ASRService: ObservableObject {
                 ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
             )
             if !outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                self.recordSuccessfulSessionStop(
-                    outputText: outputText,
-                    capturedPCM: capturedPCM,
-                    stopStartedAt: stopStartedAt
-                )
+                if self.stillOwnsStreamingSessionOutcome(sessionStop.generation) {
+                    self.recordSuccessfulSessionStop(
+                        outputText: outputText,
+                        capturedPCM: capturedPCM,
+                        stopStartedAt: stopStartedAt
+                    )
+                }
                 return outputText
             }
-            self.grokRetryStore.retain(
-                samples: capturedPCM,
-                error: .emptyTranscript,
-                languageCode: self.lastGrokLanguageCode
-            )
-            self.surfaceGrokError(.emptyTranscript)
-            self.lastStopOutcome = .failed
+            if self.stillOwnsStreamingSessionOutcome(sessionStop.generation) {
+                self.retainGrokRetry(samples: capturedPCM, error: .emptyTranscript, provider: provider)
+                self.surfaceGrokError(.emptyTranscript)
+                self.lastStopOutcome = .failed
+            }
             return ""
         } catch {
             let grokError = (error as? GrokSTTError) ?? error.asGrokSTTError()
-            self.grokRetryStore.retain(
-                samples: capturedPCM,
-                error: grokError,
-                languageCode: self.lastGrokLanguageCode
-            )
-            self.surfaceGrokError(grokError)
-            self.lastStopOutcome = .failed
+            if self.stillOwnsStreamingSessionOutcome(sessionStop.generation) {
+                self.retainGrokRetry(samples: capturedPCM, error: grokError, provider: provider)
+                self.surfaceGrokError(grokError)
+                self.lastStopOutcome = .failed
+            }
             return ""
         }
     }
@@ -5069,17 +5105,87 @@ final class ASRService: ObservableObject {
         }
     }
 
-    private func cancelStreamingSession(clearRetry: Bool) async {
+    private func makeStreamingSessionStopIdentity() -> StreamingSessionStopIdentity {
+        StreamingSessionStopIdentity(
+            generation: self.sessionGeneration,
+            session: self.activeStreamingSession,
+            pumpTask: self.sessionPumpTask,
+            startTask: self.sessionStartTask,
+            sentCursor: self.sessionPumpGate.snapshot.sentCursor,
+            stickyError: self.sessionTransportError,
+            grokProvider: self.sessionGrokProvider
+        )
+    }
+
+    private func stillOwnsStreamingSession(_ generation: UInt64) -> Bool {
+        self.sessionGeneration == generation
+    }
+
+    private func stillOwnsStreamingSessionOutcome(_ generation: UInt64) -> Bool {
+        self.sessionOwnerGeneration == generation
+    }
+
+    private func awaitCapturedSessionPump(_ pump: Task<Void, Never>?, generation: UInt64) async {
+        await pump?.value
+        if self.sessionGeneration == generation {
+            self.sessionPumpTask = nil
+        }
+    }
+
+    private func clearGrokRetryStore() {
+        self.grokRetryStore.clear()
+        self.retryGrokProvider = nil
+    }
+
+    private func retainGrokRetry(
+        samples: [Float],
+        error: GrokSTTError,
+        languageCode: String? = nil,
+        provider: GrokSTTProvider?
+    ) {
+        self.grokRetryStore.retain(
+            samples: samples,
+            error: error,
+            languageCode: languageCode ?? self.lastGrokLanguageCode
+        )
+        if let provider {
+            self.retryGrokProvider = provider
+        }
+    }
+
+    private func cancelStreamingSession(
+        generation: UInt64? = nil,
+        originatingSession: StreamingTranscriptionSession? = nil,
+        originatingStartTask: Task<Void, Never>? = nil,
+        originatingPumpTask: Task<Void, Never>? = nil,
+        clearRetry: Bool
+    ) async {
+        if let generation, self.sessionGeneration != generation {
+            originatingSession?.cancel()
+            originatingPumpTask?.cancel()
+            originatingStartTask?.cancel()
+            await originatingPumpTask?.value
+            await originatingStartTask?.value
+            return
+        }
+
         self.sessionGeneration &+= 1
+        let teardownGeneration = self.sessionGeneration
         self.sessionPumpGate.requestStop()
-        self.sessionPumpTask?.cancel()
-        self.sessionStartTask?.cancel()
+        let pump = self.sessionPumpTask
+        let start = self.sessionStartTask
+        let session = self.activeStreamingSession
+        pump?.cancel()
+        start?.cancel()
         // Close the socket before awaiting start(). A real URLSession-backed
         // `start()` waiting for `transcript.created` does not finish merely
         // because its parent Task was cancelled.
-        self.activeStreamingSession?.cancel()
-        await self.sessionPumpTask?.value
-        await self.sessionStartTask?.value
+        session?.cancel()
+        await pump?.value
+        await start?.value
+
+        guard self.sessionGeneration == teardownGeneration else { return }
+
         self.sessionPumpTask = nil
         self.sessionStartTask = nil
         self.activeStreamingSession = nil
@@ -5089,11 +5195,27 @@ final class ASRService: ObservableObject {
         self.isSessionDictation = false
         self.stopUsesSessionPath = false
         if clearRetry {
-            self.grokRetryStore.clear()
+            self.clearGrokRetryStore()
         }
     }
 
-    private func endSessionOwner() {
+    private func cancelStreamingSession(
+        identity: StreamingSessionStopIdentity,
+        clearRetry: Bool
+    ) async {
+        await self.cancelStreamingSession(
+            generation: identity.generation,
+            originatingSession: identity.session,
+            originatingStartTask: identity.startTask,
+            originatingPumpTask: identity.pumpTask,
+            clearRetry: clearRetry
+        )
+    }
+
+    private func endSessionOwner(generation: UInt64? = nil) {
+        if let generation, self.sessionOwnerGeneration != generation {
+            return
+        }
         self.sessionOwnerLive = false
         guard self.deferredSessionReset else { return }
         self.deferredSessionReset = false
@@ -5116,7 +5238,10 @@ final class ASRService: ObservableObject {
 
     func retryPendingGrokTranscription() async -> String {
         guard let pending = self.grokRetryStore.consume() else { return "" }
-        guard let provider = self.transcriptionProvider as? GrokSTTProvider else {
+        guard let provider = self.retryGrokProvider
+            ?? self.sessionGrokProvider
+            ?? (self.transcriptionProvider as? GrokSTTProvider)
+        else {
             self.grokRetryStore.retain(
                 samples: pending.samples,
                 error: pending.error,
@@ -5133,24 +5258,27 @@ final class ASRService: ObservableObject {
                 ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
             )
             if outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                self.grokRetryStore.retain(
+                self.retainGrokRetry(
                     samples: pending.samples,
                     error: .emptyTranscript,
-                    languageCode: pending.languageCode
+                    languageCode: pending.languageCode,
+                    provider: provider
                 )
                 self.surfaceGrokError(.emptyTranscript)
                 self.lastStopOutcome = .failed
                 return ""
             }
+            self.retryGrokProvider = nil
             self.publishDictationAudioSnapshotIfConfigured(from: pending.samples)
             self.lastStopOutcome = .success
             return outputText
         } catch {
             let grokError = (error as? GrokSTTError) ?? error.asGrokSTTError()
-            self.grokRetryStore.retain(
+            self.retainGrokRetry(
                 samples: pending.samples,
                 error: grokError,
-                languageCode: pending.languageCode
+                languageCode: pending.languageCode,
+                provider: provider
             )
             self.surfaceGrokError(grokError)
             self.lastStopOutcome = .failed
