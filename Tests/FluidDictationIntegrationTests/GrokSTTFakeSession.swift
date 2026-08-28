@@ -1,3 +1,4 @@
+@testable import FluidVoice_Debug
 import Foundation
 
 /// In-memory streaming session for unit tests. Production `GrokSTTProvider` must not return this.
@@ -17,6 +18,7 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
         var finishDelay: TimeInterval = 0
         var startError: GrokSTTError?
         var finishError: GrokSTTError?
+        var failBeforeAudioDone: GrokSTTError?
         var neverCreated: Bool = false
         var createdTimeout: TimeInterval = 20
         var emitPartialsFromHandoff: Bool = false
@@ -40,7 +42,7 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
     private(set) var finishCallCount = 0
     private(set) var cancelCallCount = 0
     private(set) var handoffCallCount = 0
-    private(set) var queuedCount = 0
+    private var queuedCount = 0
 
     let configuration: Configuration
 
@@ -75,6 +77,10 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
 
     var appendedSampleCount: Int {
         self.lock.withLock { self.appendedFrames.reduce(0) { $0 + ($1.count / 2) } }
+    }
+
+    func setQueuedAudioFrameCount(_ count: Int) {
+        self.lock.withLock { self.queuedCount = count }
     }
 
     func start() async throws {
@@ -158,6 +164,11 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
         }
 
         try await self.waitUntilCreated()
+
+        if let preDone = self.configuration.failBeforeAudioDone {
+            self.fail(preDone)
+            throw preDone
+        }
 
         let samples = self.lock.withLock { () -> [Float] in
             if self.state == .cancelled {

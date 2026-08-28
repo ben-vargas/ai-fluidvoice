@@ -47,6 +47,7 @@
 		A11200000000000000000002 /* GrokSTTASRServiceSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11200000000000000000001 /* GrokSTTASRServiceSessionTests.swift */; };
 		A11300000000000000000002 /* DictationOverlayStopPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11300000000000000000001 /* DictationOverlayStopPolicyTests.swift */; };
 		A11400000000000000000002 /* GrokSTTSessionHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11400000000000000000001 /* GrokSTTSessionHelpers.swift */; };
+		A11500000000000000000002 /* GrokSTTFakeSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11500000000000000000001 /* GrokSTTFakeSession.swift */; };
 		7CDB0A2F2F3C4D5600FB7CAD /* dictation_fixture.wav in Resources */ = {isa = PBXBuildFile; fileRef = 7CDB0A2B2F3C4D5600FB7CAD /* dictation_fixture.wav */; };
 		7CDB0A302F3C4D5600FB7CAD /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDB0A2C2F3C4D5600FB7CAD /* XCTest.framework */; };
 		7CE006BD2E80EBE600DDCCD6 /* AppUpdater in Frameworks */ = {isa = PBXBuildFile; productRef = 7CE006BC2E80EBE600DDCCD6 /* AppUpdater */; };
@@ -104,6 +105,7 @@
 		A11200000000000000000001 /* GrokSTTASRServiceSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTASRServiceSessionTests.swift; sourceTree = "<group>"; };
 		A11300000000000000000001 /* DictationOverlayStopPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationOverlayStopPolicyTests.swift; sourceTree = "<group>"; };
 		A11400000000000000000001 /* GrokSTTSessionHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTSessionHelpers.swift; sourceTree = "<group>"; };
+		A11500000000000000000001 /* GrokSTTFakeSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTFakeSession.swift; sourceTree = "<group>"; };
 		7C078D8F2E3B339200FB7CAC /* FluidVoice Debug.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "FluidVoice Debug.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		7C91B0022F42AA0100C0DEF0 /* HotkeyShortcutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyShortcutTests.swift; sourceTree = "<group>"; };
 		C0DE89000000000000000001 /* SettingsNavigationStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsNavigationStateTests.swift; sourceTree = "<group>"; };
@@ -214,6 +216,7 @@
 				A11200000000000000000001 /* GrokSTTASRServiceSessionTests.swift */,
 				A11300000000000000000001 /* DictationOverlayStopPolicyTests.swift */,
 				A11400000000000000000001 /* GrokSTTSessionHelpers.swift */,
+				A11500000000000000000001 /* GrokSTTFakeSession.swift */,
 				0B05F11E000000000000A001 /* SupportedFileExtensionsTests.swift */,
 			);
 			path = FluidDictationIntegrationTests;
@@ -403,6 +406,7 @@
 				A11200000000000000000002 /* GrokSTTASRServiceSessionTests.swift in Sources */,
 				A11300000000000000000002 /* DictationOverlayStopPolicyTests.swift in Sources */,
 				A11400000000000000000002 /* GrokSTTSessionHelpers.swift in Sources */,
+				A11500000000000000000002 /* GrokSTTFakeSession.swift in Sources */,
 				0B05F11E000000000000A002 /* SupportedFileExtensionsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

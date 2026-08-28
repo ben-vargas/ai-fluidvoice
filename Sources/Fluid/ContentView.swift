@@ -215,9 +215,7 @@ struct ContentView: View {
     @State private var activeDictationShortcutSlot: SettingsStore.DictationShortcutSlot? = nil
     @State private var activeRecordingMode: ActiveRecordingMode = .none
     @State private var pendingAIReprocessText: String? = nil
-    @State private var pendingSTTRetryWasRewrite = false
-    @State private var pendingSTTRetryWasCommand = false
-    @State private var pendingSTTRetryRoute: DictationOutputRoute = .normal
+    @State private var pendingSTTRetryContext: DictationStopRoutingContext?
     @State private var activeShortcutRecordingTarget: ShortcutRecordingTarget? = nil
     @State private var currentRecordingModifierKeyCodes: Set<UInt16> = []
     @State private var pendingModifierKeyCodes: Set<UInt16> = []
@@ -2397,6 +2395,17 @@ struct ContentView: View {
         let shouldUseAIOnStop = activeDictationSlot.map {
             DictationAIPostProcessingGate.isConfigured(for: $0, appBundleID: self.recordingAppInfo?.bundleId)
         } ?? DictationAIPostProcessingGate.isConfigured(for: .primary, appBundleID: self.recordingAppInfo?.bundleId)
+        let routingContext = DictationStopRoutingContext(
+            isNormalRoute: route == .normal,
+            wasRewriteMode: wasRewriteMode,
+            wasCommandMode: wasCommandMode,
+            isPromptTestActive: promptTest.isActive,
+            shouldUseAIOnStop: shouldUseAIOnStop,
+            spokenSendEnabled: route == .normal && self.settings.spokenSendEnabled,
+            dictationSlot: activeDictationSlot,
+            promptOverride: promptOverride,
+            isOnboardingTryout: isOnboardingTryout
+        )
         let shouldHideOverlayOnStop = DictationOverlayStopPolicy.shouldHideOverlayOnStop(
             isNormalRoute: route == .normal,
             wasRewriteMode: wasRewriteMode,
@@ -2422,14 +2431,14 @@ struct ContentView: View {
         } else {
             // Show "Transcribing" state before calling stop() when the overlay needs
             // to remain available for prompt, command, rewrite, or AI feedback.
-            // Keep live assembler text for Grok; only replace when the snapshot is empty.
-            let hasLiveTranscript = !self.asr.partialTranscription
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-                .isEmpty
+            // Keep live assembler text for Grok only; local engines stay unchanged.
             DebugLogger.shared.debug("Showing transcription processing state", source: "ContentView")
             self.appBench("processing_ui_request status=Transcribing")
             self.menuBarManager.setProcessing(true)
-            if !hasLiveTranscript {
+            if !DictationStopRoutingPolicy.shouldKeepLiveTranscriptOnStop(
+                isCloudSessionActive: self.asr.isCloudSessionActive,
+                partialTranscription: self.asr.partialTranscription
+            ) {
                 NotchOverlayManager.shared.updateTranscriptionText("Transcribing")
             }
             self.appBench("processing_ui_requested status=Transcribing")
@@ -2471,9 +2480,7 @@ struct ContentView: View {
                 }
             }
             if self.asr.hasPendingSTTRetry {
-                self.pendingSTTRetryWasRewrite = wasRewriteMode
-                self.pendingSTTRetryWasCommand = wasCommandMode
-                self.pendingSTTRetryRoute = route
+                self.pendingSTTRetryContext = routingContext
                 NotchContentState.shared.showSTTFailure(
                     message: self.asr.errorMessage.isEmpty
                         ? "Couldn't reach xAI. Your recording is kept — Retry sends it again."
@@ -2489,8 +2496,25 @@ struct ContentView: View {
             return
         }
 
-        // Prompt Test Mode: reroute dictation hotkey output into the prompt editor (no typing/clipboard/history).
-        if promptTest.isActive {
+        await self.dispatchSuccessfulTranscription(
+            transcribedText: transcribedText,
+            audioSnapshot: audioSnapshot,
+            context: routingContext,
+            didRequestOverlayHideOnStop: didRequestOverlayHideOnStop
+        )
+    }
+
+    private func dispatchSuccessfulTranscription(
+        transcribedText: String,
+        audioSnapshot: DictationAudioSnapshot?,
+        context: DictationStopRoutingContext,
+        didRequestOverlayHideOnStop: Bool
+    ) async {
+        let promptTest = DictationPromptTestCoordinator.shared
+
+        switch DictationStopRoutingPolicy.intent(for: context) {
+        case .promptTest:
+            // Prompt Test Mode: reroute dictation hotkey output into the prompt editor (no typing/clipboard/history).
             promptTest.lastTranscriptionText = transcribedText
             promptTest.lastOutputText = ""
             promptTest.lastError = ""
@@ -2502,7 +2526,6 @@ struct ContentView: View {
             }
 
             promptTest.isProcessing = true
-            // Processing already true from above
             defer {
                 self.menuBarManager.setProcessing(false)
                 promptTest.isProcessing = false
@@ -2523,14 +2546,11 @@ struct ContentView: View {
                 promptTest.lastError = error.localizedDescription
             }
             return
-        }
 
-        if NotchOverlayManager.shared.isBottomOverlayVisible {
-            BottomOverlayWindowController.shared.beginReleaseTransition()
-        }
-
-        // If this was a rewrite recording, process the rewrite instead of typing
-        if wasRewriteMode {
+        case .rewrite:
+            if NotchOverlayManager.shared.isBottomOverlayVisible {
+                BottomOverlayWindowController.shared.beginReleaseTransition()
+            }
             DebugLogger.shared.info("Processing rewrite with instruction: \(transcribedText)", source: "ContentView")
             AnalyticsService.shared.recordModelUsage(
                 role: .transcription,
@@ -2540,10 +2560,11 @@ struct ContentView: View {
             let appInfo = self.recordingAppInfo ?? self.getCurrentAppInfo()
             await self.processRewriteWithVoiceInstruction(transcribedText, appInfo: appInfo)
             return
-        }
 
-        // If this was a command recording, process the command
-        if wasCommandMode {
+        case .command:
+            if NotchOverlayManager.shared.isBottomOverlayVisible {
+                BottomOverlayWindowController.shared.beginReleaseTransition()
+            }
             DebugLogger.shared.info("Processing command: \(transcribedText)", source: "ContentView")
             AnalyticsService.shared.recordModelUsage(
                 role: .transcription,
@@ -2552,6 +2573,13 @@ struct ContentView: View {
             )
             await self.processCommandWithVoice(transcribedText)
             return
+
+        case .dictation:
+            break
+        }
+
+        if NotchOverlayManager.shared.isBottomOverlayVisible {
+            BottomOverlayWindowController.shared.beginReleaseTransition()
         }
 
         var finalText: String
@@ -2567,19 +2595,17 @@ struct ContentView: View {
         let spokenSendParse = SpokenSendParser.parse(
             punctuationFormattedText,
             phrase: self.settings.spokenSendPhrase,
-            enabled: route == .normal && self.settings.spokenSendEnabled
+            enabled: context.spokenSendEnabled
         )
         self.updateSpokenSendIndicatorForFinalParse(shouldSend: spokenSendParse.shouldSend)
         let normalizedTranscribedText = spokenSendParse.text
         let sendsExistingDraft = spokenSendParse.shouldSend &&
             normalizedTranscribedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
 
-        let shouldUseAI = !sendsExistingDraft && (activeDictationSlot.map {
-            DictationAIPostProcessingGate.isConfigured(for: $0, appBundleID: appInfo.bundleId)
-        } ?? DictationAIPostProcessingGate.isConfigured(for: .primary, appBundleID: appInfo.bundleId))
+        let shouldUseAI = !sendsExistingDraft && context.shouldUseAIOnStop
         let transcriptionModelInfo = self.currentTranscriptionModelInfo()
         let postProcessingModelInfo = self.currentDictationAIModelInfo(
-            dictationSlot: activeDictationSlot,
+            dictationSlot: context.dictationSlot,
             appBundleID: appInfo.bundleId
         )
         AnalyticsService.shared.recordUsage(
@@ -2615,8 +2641,8 @@ struct ContentView: View {
             do {
                 finalText = try await self.processTextWithAI(
                     normalizedTranscribedText,
-                    overrideSystemPrompt: promptOverride,
-                    dictationSlot: activeDictationSlot,
+                    overrideSystemPrompt: context.promptOverride,
+                    dictationSlot: context.dictationSlot,
                     streamHandler: streamHandler
                 )
                 await streamPreview.flush()
@@ -2679,8 +2705,8 @@ struct ContentView: View {
         )
         self.recordingPrecedingText = ""
         self.asr.finalText = finalText
-        if route == .onboardingSandbox,
-           self.isOnboardingVoicePlaygroundStepActive,
+        if !context.isNormalRoute,
+           context.isOnboardingTryout,
            !finalText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         {
             AnalyticsService.shared.finishOnboardingTryout(
@@ -2703,7 +2729,7 @@ struct ContentView: View {
         self.appBench("transcription_finalized chars=\(finalText.count)")
         self.appBench("text_ready chars=\(finalText.count)")
 
-        let shouldPersistOutputs = route == .normal
+        let shouldPersistOutputs = context.isNormalRoute
         if !shouldPersistOutputs {
             DebugLogger.shared.info(
                 "Sandbox route active: suppressing clipboard/history/external typing side effects",
@@ -3062,20 +3088,14 @@ struct ContentView: View {
             }
 
             NotchOverlayManager.shared.updateTranscriptionText("")
-            if self.pendingSTTRetryWasRewrite {
-                let appInfo = self.recordingAppInfo ?? self.getCurrentAppInfo()
-                await self.processRewriteWithVoiceInstruction(trimmed, appInfo: appInfo)
-                return
-            }
-            if self.pendingSTTRetryWasCommand {
-                await self.processCommandWithVoice(trimmed)
-                return
-            }
-            await self.applyHistoryTextOutput(trimmed, saveToHistory: true)
-            self.menuBarManager.setProcessing(false)
-            if self.pendingSTTRetryRoute == .normal {
-                await self.menuBarManager.finishProcessingAndHideOverlay()
-            }
+            let context = self.pendingSTTRetryContext ?? DictationStopRoutingContext()
+            self.pendingSTTRetryContext = nil
+            await self.dispatchSuccessfulTranscription(
+                transcribedText: trimmed,
+                audioSnapshot: nil,
+                context: context,
+                didRequestOverlayHideOnStop: false
+            )
         }
     }
 
@@ -5122,5 +5142,41 @@ enum DictationOverlayStopPolicy {
             && !spokenSendEnabled
             && !isCloudSessionActive
             && !hasPendingSTTRetry
+    }
+}
+
+struct DictationStopRoutingContext: Equatable {
+    var isNormalRoute: Bool = true
+    var wasRewriteMode: Bool = false
+    var wasCommandMode: Bool = false
+    var isPromptTestActive: Bool = false
+    var shouldUseAIOnStop: Bool = false
+    var spokenSendEnabled: Bool = false
+    var dictationSlot: SettingsStore.DictationShortcutSlot? = nil
+    var promptOverride: String? = nil
+    var isOnboardingTryout: Bool = false
+}
+
+enum DictationSuccessfulStopIntent: Equatable {
+    case promptTest
+    case rewrite
+    case command
+    case dictation
+}
+
+enum DictationStopRoutingPolicy {
+    static func intent(for context: DictationStopRoutingContext) -> DictationSuccessfulStopIntent {
+        if context.isPromptTestActive { return .promptTest }
+        if context.wasRewriteMode { return .rewrite }
+        if context.wasCommandMode { return .command }
+        return .dictation
+    }
+
+    static func shouldKeepLiveTranscriptOnStop(
+        isCloudSessionActive: Bool,
+        partialTranscription: String
+    ) -> Bool {
+        isCloudSessionActive
+            && !partialTranscription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 }

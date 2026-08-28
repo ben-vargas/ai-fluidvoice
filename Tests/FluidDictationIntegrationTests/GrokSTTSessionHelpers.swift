@@ -67,3 +67,48 @@ func makeGrokSTTProvider(
     }
     return provider
 }
+
+final class StubLocalTranscriptionProvider: TranscriptionProvider, @unchecked Sendable {
+    let name = "Stub Local"
+    let isAvailable = true
+    var isReady = true
+    let prefersNativeFileTranscription = false
+    let shouldClearCacheAfterCancellation = false
+    private let lock = NSLock()
+    private var transcribeFinalCountStorage = 0
+    var transcribeFinalText = "local"
+
+    var transcribeFinalCount: Int {
+        self.lock.withLock { self.transcribeFinalCountStorage }
+    }
+
+    func prepare(progressHandler: ((ModelPreparationProgress) -> Void)?) async throws {}
+
+    func transcribe(_ samples: [Float]) async throws -> ASRTranscriptionResult {
+        try await self.transcribeFinal(samples)
+    }
+
+    func transcribeStreaming(_ samples: [Float]) async throws -> ASRTranscriptionResult {
+        _ = samples
+        return ASRTranscriptionResult(text: "", confidence: 0)
+    }
+
+    func transcribeFinal(_ samples: [Float]) async throws -> ASRTranscriptionResult {
+        _ = samples
+        self.lock.withLock { self.transcribeFinalCountStorage += 1 }
+        return ASRTranscriptionResult(text: self.transcribeFinalText, confidence: 1)
+    }
+
+    func transcribeDictionaryTraining(_ samples: [Float]) async throws -> ASRTranscriptionResult {
+        try await self.transcribeFinal(samples)
+    }
+
+    func transcribeFile(at fileURL: URL) async throws -> ASRTranscriptionResult {
+        _ = fileURL
+        return ASRTranscriptionResult(text: self.transcribeFinalText, confidence: 1)
+    }
+
+    func modelsExistOnDisk() -> Bool { true }
+
+    func clearCache() async throws {}
+}

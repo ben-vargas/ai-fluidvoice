@@ -10,24 +10,24 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
 
     private let resolver: any GrokSTTCredentialResolving
     private let lock = NSLock()
+
+    #if DEBUG
     private var sessionFactory: ((StreamingSTTSessionConfiguration) throws -> StreamingTranscriptionSession)?
     private var restFinalHandler: (@Sendable ([Float]) async throws -> ASRTranscriptionResult)?
     private var restFileHandler: (@Sendable (URL) async throws -> ASRTranscriptionResult)?
     private var prepareHandler: (@Sendable (((ModelPreparationProgress) -> Void)?) async throws -> Void)?
     private var prepareCallCountStorage = 0
+    #endif
 
-    init(
-        resolver: any GrokSTTCredentialResolving = GrokSTTCredentialResolver.shared,
-        sessionFactory: ((StreamingSTTSessionConfiguration) throws -> StreamingTranscriptionSession)? = nil
-    ) {
+    init(resolver: any GrokSTTCredentialResolving = GrokSTTCredentialResolver.shared) {
         self.resolver = resolver
-        self.sessionFactory = sessionFactory
     }
 
     var isReady: Bool {
         self.resolver.isSourceConfigured
     }
 
+    #if DEBUG
     var prepareCallCount: Int {
         self.lock.withLock { self.prepareCallCountStorage }
     }
@@ -47,14 +47,19 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     func setPrepareHandler(_ handler: (@Sendable (((ModelPreparationProgress) -> Void)?) async throws -> Void)?) {
         self.lock.withLock { self.prepareHandler = handler }
     }
+    #endif
 
     func prepare(progressHandler: ((ModelPreparationProgress) -> Void)?) async throws {
+        #if DEBUG
         self.lock.withLock { self.prepareCallCountStorage += 1 }
+        #endif
         progressHandler?(.loading)
+        #if DEBUG
         if let prepareHandler = self.lock.withLock({ self.prepareHandler }) {
             try await prepareHandler(progressHandler)
             return
         }
+        #endif
         _ = try await self.resolver.resolveCredential()
     }
 
@@ -69,9 +74,11 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
 
     nonisolated func transcribeFinal(_ samples: [Float]) async throws -> ASRTranscriptionResult {
         try await Task.detached { [samples] in
+            #if DEBUG
             if let restFinalHandler = self.lock.withLock({ self.restFinalHandler }) {
                 return try await restFinalHandler(samples)
             }
+            #endif
             throw GrokSTTError.server(status: 501, message: "Grok REST speech-to-text is not available yet.")
         }.value
     }
@@ -83,9 +90,11 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
 
     nonisolated func transcribeFile(at fileURL: URL) async throws -> ASRTranscriptionResult {
         try await Task.detached {
+            #if DEBUG
             if let restFileHandler = self.lock.withLock({ self.restFileHandler }) {
                 return try await restFileHandler(fileURL)
             }
+            #endif
             throw GrokSTTError.server(status: 501, message: "Grok REST speech-to-text is not available yet.")
         }.value
     }
@@ -97,9 +106,11 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     func makeStreamingSession(
         configuration: StreamingSTTSessionConfiguration
     ) throws -> StreamingTranscriptionSession {
+        #if DEBUG
         if let factory = self.lock.withLock({ self.sessionFactory }) {
             return try factory(configuration)
         }
+        #endif
         throw GrokSTTError.server(status: 501, message: "Grok streaming speech-to-text is not available yet.")
     }
 }
