@@ -107,4 +107,33 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
         )
         XCTAssertFalse(SettingsStore.SpeechModel.isGrokSTTSelectable())
     }
+
+    func testLocalSpeechModelResolutionDoesNotEvaluateGrokCredentialAvailability() {
+        let localRawValues = SettingsStore.SpeechModel.allCases
+            .filter { $0 != .grokSTT }
+            .map(\.rawValue)
+        XCTAssertFalse(localRawValues.isEmpty)
+        for rawValue in localRawValues {
+            var evaluated = false
+            let resolved = SettingsStore.SpeechModel.resolvedSpeechModel(
+                rawValue: rawValue,
+                isGrokSelectable: {
+                    evaluated = true
+                    return true
+                }()
+            )
+            XCTAssertFalse(evaluated, "credential gate ran for \(rawValue)")
+            XCTAssertEqual(resolved.rawValue, rawValue)
+        }
+
+        var grokEvaluated = false
+        _ = SettingsStore.SpeechModel.resolvedSpeechModel(
+            rawValue: SettingsStore.SpeechModel.grokSTT.rawValue,
+            isGrokSelectable: {
+                grokEvaluated = true
+                return false
+            }()
+        )
+        XCTAssertTrue(grokEvaluated, "Grok raw values must still evaluate the selectability gate")
+    }
 }

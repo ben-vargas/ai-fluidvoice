@@ -4594,14 +4594,16 @@ final class SettingsStore: ObservableObject {
 
         /// Resolves a stored speech-model raw value. Grok falls back unless the live
         /// selectability gate is open (catalog + Activate + selected-mode source).
+        /// `isGrokSelectable` is `@autoclosure` so local-engine raw values never
+        /// evaluate the Grok credential/source gate.
         nonisolated static func resolvedSpeechModel(
             rawValue: String,
-            isGrokSelectable: Bool
+            isGrokSelectable: @autoclosure () -> Bool
         ) -> SpeechModel {
             guard let model = SpeechModel(rawValue: rawValue) else {
                 return defaultModel
             }
-            if model == .grokSTT, !isGrokSelectable {
+            if model == .grokSTT, !isGrokSelectable() {
                 return defaultModel
             }
             return model
@@ -5850,11 +5852,13 @@ extension SettingsStore {
         get {
             // Check if already using new system
             if let rawValue = defaults.string(forKey: Keys.selectedSpeechModel),
-               SpeechModel(rawValue: rawValue) != nil
+               let stored = SpeechModel(rawValue: rawValue)
             {
+                // Evaluate the Grok credential/source gate only when the stored
+                // model is Grok. Local engines must not hit Keychain or auth.json.
                 let model = SpeechModel.resolvedSpeechModel(
                     rawValue: rawValue,
-                    isGrokSelectable: SpeechModel.isGrokSTTSelectable()
+                    isGrokSelectable: stored == .grokSTT && SpeechModel.isGrokSTTSelectable()
                 )
                 // If Qwen was previously selected, transparently fall back while preview is disabled.
                 if model == .qwen3Asr, !SpeechModel.qwenPreviewEnabled {
