@@ -77,6 +77,24 @@ final class GrokSTTCredentialResolverTests: XCTestCase {
         XCTAssertEqual(refresh.spawnCount, 0)
     }
 
+    func testUnauthorizedRecoveryPicksUnexpiredAlternateOverExpiredSelfConsistent() async throws {
+        let files = MemoryGrokSTTFileSystem()
+        files.files[self.authPath] = self.rejectedExpiredConsistentAndLiveMismatchedJSON()
+        let refresh = CountingGrokCLIRefresh()
+        let resolver = self.makeResolver(
+            mode: .grokCLISession,
+            apiKeys: InMemoryGrokSTTAPIKeyStore(),
+            files: files,
+            refresh: refresh
+        )
+        let credential = try await resolver.resolveCredentialAfterUnauthorized(
+            rejectedBearerFingerprint: GrokSTTCredential.fingerprint("rejected-bearer")
+        )
+        XCTAssertEqual(credential.source, .grokCLISession)
+        XCTAssertEqual(credential.bearer, "live-mismatch")
+        XCTAssertEqual(refresh.spawnCount, 0)
+    }
+
     func testRefreshIsSingleFlightAndNeverTerminates() async throws {
         let files = MemoryGrokSTTFileSystem()
         files.files[self.authPath] = self.sessionJSON(key: "expired-bearer", expiresFromNow: 100)
@@ -247,19 +265,64 @@ final class GrokSTTCredentialResolverTests: XCTestCase {
             }
             XCTAssertEqual(nsError.domain, GrokSTTError.nsErrorDomain)
             XCTAssertEqual(nsError.code, error.numericCode)
+            if case let .server(_, stored) = error {
+                XCTAssertFalse(stored.value.localizedCaseInsensitiveContains("Bearer"), stored.value)
+                XCTAssertFalse(stored.value.contains("supersecret-token-value"), stored.value)
+            }
         }
 
-        let fromHTTP = GrokSTTError.fromHTTPStatus(
-            503,
-            message: "Bearer supersecret-token-value-12345678901234567890"
-        )
-        guard case let .server(_, storedMessage) = fromHTTP else {
-            return XCTFail("503 must map to .server")
+        let credentialPayloads: [String] = [
+            "Bearer supersecret-token-value-12345678901234567890",
+            #""key": "sk-live-secret-value""#,
+            "Cookie: session=abc123; auth=xyz-credential",
+            #"{"https://auth.x.ai::client-a":{"key":"cli-store-secret","oidc_issuer":"https://auth.x.ai","oidc_client_id":"client-a"}}"#,
+        ]
+        for payload in credentialPayloads {
+            self.assertServerPayloadRedacted(
+                GrokSTTError.server(status: 503, message: GrokSTTSanitizedMessage(payload)),
+                secrets: [
+                    "Bearer",
+                    "supersecret-token-value",
+                    "sk-live-secret-value",
+                    "session=abc123",
+                    "cli-store-secret",
+                    "oidc_issuer",
+                ]
+            )
+            self.assertServerPayloadRedacted(
+                GrokSTTError.fromHTTPStatus(503, message: payload),
+                secrets: [
+                    "Bearer",
+                    "supersecret-token-value",
+                    "sk-live-secret-value",
+                    "session=abc123",
+                    "cli-store-secret",
+                    "oidc_issuer",
+                ]
+            )
         }
-        XCTAssertFalse(storedMessage.localizedCaseInsensitiveContains("Bearer"))
-        XCTAssertFalse(storedMessage.contains("supersecret-token-value"))
-        XCTAssertFalse(String(describing: fromHTTP).contains("supersecret-token-value"))
-        XCTAssertFalse(String(reflecting: fromHTTP).contains("supersecret-token-value"))
+    }
+
+    private func assertServerPayloadRedacted(_ error: GrokSTTError, secrets: [String]) {
+        guard case let .server(_, stored) = error else {
+            return XCTFail("expected .server, got \(error)")
+        }
+        let surfaces = [
+            stored.value,
+            String(describing: stored),
+            String(reflecting: stored),
+            String(describing: error),
+            String(reflecting: error),
+            error.asNSError().localizedDescription,
+        ]
+        for text in surfaces {
+            for needle in secrets {
+                XCTAssertFalse(
+                    text.localizedCaseInsensitiveContains(needle),
+                    "payload leaked \(needle) via \(text)"
+                )
+            }
+        }
     }
 
     func testForbiddenHasNoRetryHelper() {
@@ -310,6 +373,34 @@ final class GrokSTTCredentialResolverTests: XCTestCase {
             "oidc_issuer": "https://auth.x.ai",
             "oidc_client_id": "client-a",
             "email": "user@example.com"
+          }
+        }
+        """
+        return Data(json.utf8)
+    }
+
+    private func rejectedExpiredConsistentAndLiveMismatchedJSON() -> Data {
+        let expired = ISO8601DateFormatter().string(from: self.now.addingTimeInterval(100))
+        let live = ISO8601DateFormatter().string(from: self.now.addingTimeInterval(3600))
+        let json = """
+        {
+          "https://auth.x.ai::rejected": {
+            "key": "rejected-bearer",
+            "expires_at": "\(live)",
+            "oidc_issuer": "https://auth.x.ai",
+            "oidc_client_id": "rejected"
+          },
+          "https://auth.x.ai::client-a": {
+            "key": "expired-consistent",
+            "expires_at": "\(expired)",
+            "oidc_issuer": "https://auth.x.ai",
+            "oidc_client_id": "client-a"
+          },
+          "mismatch-scope": {
+            "key": "live-mismatch",
+            "expires_at": "\(live)",
+            "oidc_issuer": "https://auth.x.ai",
+            "oidc_client_id": "client-b"
           }
         }
         """

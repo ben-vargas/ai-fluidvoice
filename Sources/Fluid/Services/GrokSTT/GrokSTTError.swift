@@ -1,5 +1,23 @@
 import Foundation
 
+/// Server-message associated value that cannot retain a raw credential-bearing string.
+/// The only initializer sanitizes; there is no raw stored-text path.
+nonisolated struct GrokSTTSanitizedMessage: Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible, ExpressibleByStringLiteral {
+    let value: String
+
+    init(_ raw: String) {
+        self.value = GrokSTTError.sanitizedMessage(raw)
+    }
+
+    init(stringLiteral value: String) {
+        self.init(value)
+    }
+
+    var description: String { self.value }
+
+    var debugDescription: String { self.value }
+}
+
 /// Typed STT failures. Payloads never include Bearer tokens, `key`, cookies, or `auth.json` excerpts.
 /// `asNSError().userInfo` contains only `NSLocalizedDescriptionKey` so `ASRService.stop` logging is safe.
 nonisolated enum GrokSTTError: Error, LocalizedError, CustomStringConvertible, CustomDebugStringConvertible, Equatable, Sendable {
@@ -14,7 +32,7 @@ nonisolated enum GrokSTTError: Error, LocalizedError, CustomStringConvertible, C
     case rateLimited(retryAfter: TimeInterval?)
     case timeout
     case offline
-    case server(status: Int, message: String)
+    case server(status: Int, message: GrokSTTSanitizedMessage)
     case socketClosed(code: Int)
     case emptyTranscript
     case cancelled
@@ -74,11 +92,10 @@ nonisolated enum GrokSTTError: Error, LocalizedError, CustomStringConvertible, C
         case .offline:
             return "Couldn't reach xAI. Your recording is kept — Retry sends it again."
         case let .server(status, message):
-            let sanitized = Self.sanitizedMessage(message)
-            if sanitized.isEmpty {
+            if message.value.isEmpty {
                 return "Grok speech-to-text failed (HTTP \(status))."
             }
-            return "Grok speech-to-text failed (HTTP \(status)). \(sanitized)"
+            return "Grok speech-to-text failed (HTTP \(status)). \(message.value)"
         case let .socketClosed(code):
             return "The Grok speech connection closed unexpectedly (\(code))."
         case .emptyTranscript:
@@ -144,11 +161,14 @@ nonisolated enum GrokSTTError: Error, LocalizedError, CustomStringConvertible, C
         case 429:
             return .rateLimited(retryAfter: retryAfter)
         default:
-            return .server(status: status, message: Self.sanitizedMessage(message))
+            return .server(status: status, message: GrokSTTSanitizedMessage(message))
         }
     }
 
     static func sanitizedMessage(_ message: String) -> String {
+        if Self.looksLikeAuthJSONExcerpt(message) {
+            return "[redacted]"
+        }
         var result = message
         for pattern in Self.redactionPatterns {
             guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
@@ -162,11 +182,22 @@ nonisolated enum GrokSTTError: Error, LocalizedError, CustomStringConvertible, C
         return trimmed
     }
 
+    private static func looksLikeAuthJSONExcerpt(_ message: String) -> Bool {
+        let lower = message.lowercased()
+        if lower.contains("oidc_issuer") || lower.contains("oidc_client_id") || lower.contains("refresh_token") {
+            return true
+        }
+        return lower.contains("\"key\"") && (lower.contains("expires_at") || lower.contains("::"))
+    }
+
     private static let redactionPatterns = [
         #"(?i)bearer\s+\S+"#,
         #"(?i)authorization:\s*\S+"#,
+        #"(?i)(?:set-)?cookie:\s*[^\n]+"#,
         #"\bxai-[A-Za-z0-9_-]{8,}\b"#,
         #"(?i)refresh_token"#,
+        #"(?i)[\"']key[\"']\s*:\s*[\"'][^\"']*[\"']"#,
+        #"(?i)\bkey\s*=\s*\S+"#,
         #"[A-Za-z0-9_-]{40,}"#,
     ]
 }

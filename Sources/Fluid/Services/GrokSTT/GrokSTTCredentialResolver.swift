@@ -110,7 +110,11 @@ final nonisolated class GrokSTTCredentialResolver: GrokSTTCredentialResolving, @
             throw GrokSTTError.noCredentialConfigured
         }
 
-        let picked = self.dependencies.authStore.pick(from: entries, previousKeys: [:], exclude: exclude)
+        // 401 recovery (allowRefresh == false): only unexpired entries. Ordinary
+        // bb scoring would otherwise prefer an expired self-consistent entry (2)
+        // over a live mismatched alternate (1) and then throw because refresh is off.
+        let candidates = allowRefresh ? entries : entries.filter { !$0.isExpired }
+        let picked = self.dependencies.authStore.pick(from: candidates, previousKeys: [:], exclude: exclude)
         guard let picked else {
             throw exclude == nil ? GrokSTTError.noCredentialConfigured : GrokSTTError.unauthorized
         }
