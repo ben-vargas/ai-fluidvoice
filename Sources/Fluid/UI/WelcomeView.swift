@@ -2695,7 +2695,7 @@ struct OnboardingFlowView: View {
         }
 
         switch route.binding {
-        case .automatic, .whisper:
+        case .automatic, .whisper, .grokSTT:
             return true
         case let .appleSpeech(localeIdentifier):
             return self.settings.selectedAppleSpeechLocaleIdentifier == localeIdentifier
@@ -2717,7 +2717,7 @@ struct OnboardingFlowView: View {
 
         let languageChanged: Bool
         switch route.binding {
-        case .automatic, .whisper:
+        case .automatic, .whisper, .grokSTT:
             languageChanged = false
         case .appleSpeech:
             languageChanged = oldAppleSpeechLocaleIdentifier != self.settings.selectedAppleSpeechLocaleIdentifier
@@ -2864,7 +2864,7 @@ private extension OnboardingFlowView {
         }
 
         switch route.binding {
-        case .automatic, .whisper:
+        case .automatic, .whisper, .grokSTT:
             return self.settings.onboardingSelectedLanguageID == route.language.id
         case let .appleSpeech(localeIdentifier):
             return self.settings.selectedAppleSpeechLocaleIdentifier == localeIdentifier

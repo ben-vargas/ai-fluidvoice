@@ -18,6 +18,8 @@ struct SettingsBackupPayload: Codable, Equatable {
     let privateAIContextTokenLimit: Int?
     let selectedSpeechModel: SettingsStore.SpeechModel
     let selectedWhisperLanguageCode: String?
+    let selectedGrokSTTLanguageCode: String?
+    let grokCLIBinaryPath: String?
     let selectedCohereLanguage: SettingsStore.CohereLanguage
     let selectedNemotronLanguage: SettingsStore.NemotronLanguage?
     let selectedAppleSpeechLocaleIdentifier: String?

@@ -21,6 +21,7 @@ struct VoiceEngineLanguageRoute: Identifiable, Equatable {
         case cohere(SettingsStore.CohereLanguage)
         case nemotron(SettingsStore.NemotronLanguage)
         case whisper(languageCode: String)
+        case grokSTT(languageCode: String)
 
         var id: String {
             switch self {
@@ -34,6 +35,8 @@ struct VoiceEngineLanguageRoute: Identifiable, Equatable {
                 return "nemotron-\(language.rawValue)"
             case let .whisper(languageCode):
                 return "whisper-\(languageCode)"
+            case let .grokSTT(languageCode):
+                return "grok-\(languageCode)"
             }
         }
     }
@@ -135,6 +138,8 @@ enum VoiceEngineLanguageCatalog {
             settings.selectedCohereLanguage = language
         case let .nemotron(language):
             settings.selectedNemotronLanguage = language
+        case let .grokSTT(languageCode):
+            settings.selectedGrokSTTLanguageCode = SettingsStore.grokSTTLanguageCode(fromStoredValue: languageCode)
         }
     }
 
@@ -194,6 +199,34 @@ enum VoiceEngineLanguageCatalog {
 
     static func whisperLanguageCode(for languageID: String) -> String? {
         self.whisperLanguageCodeMap[languageID]
+    }
+
+    /// xAI STT language codes (2026-08-27). Mandarin `zh` is intentionally omitted.
+    static let grokSTTLanguageCodes: [String] = [
+        "ar", "cs", "da", "nl", "en", "fil", "fr", "de", "hi",
+        "id", "it", "ja", "ko", "mk", "ms", "fa", "pl", "pt",
+        "ro", "ru", "es", "sv", "th", "tr", "vi",
+    ]
+
+    static var grokSTTLanguages: [VoiceEngineLanguage] {
+        self.grokSTTLanguageCodes.compactMap { Self.grokSTTLanguage(forCode: $0) }
+    }
+
+    static func grokSTTLanguage(forCode languageCode: String) -> VoiceEngineLanguage? {
+        let catalogID = languageCode == "fil" ? "tl" : languageCode
+        guard self.grokSTTLanguageCodes.contains(languageCode) else { return nil }
+        return self.languageDefinitions.first { $0.id == catalogID }
+    }
+
+    static func grokSTTLanguageCode(for languageID: String) -> String? {
+        if languageID == "zh" { return nil }
+        if languageID == "tl" { return "fil" }
+        return self.grokSTTLanguageCodes.contains(languageID) ? languageID : nil
+    }
+
+    static func grokSTTLanguageDisplayName(forCode languageCode: String) -> String {
+        if languageCode == "fil" { return "Filipino" }
+        return Self.grokSTTLanguage(forCode: languageCode)?.displayName ?? languageCode
     }
 
     private static func appleSpeechAnalyzerLocaleIdentifier(for languageID: String) -> String? {
