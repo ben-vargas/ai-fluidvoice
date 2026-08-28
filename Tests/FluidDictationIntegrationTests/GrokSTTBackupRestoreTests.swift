@@ -41,7 +41,7 @@ final class GrokSTTBackupRestoreTests: XCTestCase {
 
     func testRestoringGrokSTTWithoutCredentialSourceFallsBackToDefaultModel() {
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTTCatalogVisible)
-        XCTAssertFalse(SettingsStore.SpeechModel.grokSTTActivateEnabled)
+        XCTAssertTrue(SettingsStore.SpeechModel.grokSTTActivateEnabled)
         XCTAssertFalse(
             SettingsStore.SpeechModel.isGrokSTTSelectable(
                 catalogVisible: true,

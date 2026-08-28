@@ -20,9 +20,9 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
         XCTAssertEqual(model.provider, .xai)
         XCTAssertEqual(model.brandName, "xAI")
         XCTAssertFalse(GrokSTTProvider().modelsExistOnDisk())
-        XCTAssertFalse(model.canActivateVoiceEngine)
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTTCatalogVisible)
-        XCTAssertFalse(SettingsStore.SpeechModel.grokSTTActivateEnabled)
+        XCTAssertTrue(SettingsStore.SpeechModel.grokSTTActivateEnabled)
+        XCTAssertTrue(SettingsStore.SpeechModel.grokSTTCLISocketEnabled)
         XCTAssertTrue(SettingsStore.SpeechModel.availableModels.contains(.grokSTT))
     }
 
@@ -105,7 +105,31 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
                 credentialSourceConfigured: true
             )
         )
-        XCTAssertFalse(SettingsStore.SpeechModel.isGrokSTTSelectable())
+        XCTAssertFalse(
+            SettingsStore.SpeechModel.isGrokSTTSelectable(
+                catalogVisible: true,
+                activateEnabled: true,
+                credentialSourceConfigured: false
+            )
+        )
+        XCTAssertFalse(
+            SettingsStore.SpeechModel.isGrokSTTSelectable(
+                catalogVisible: true,
+                activateEnabled: true,
+                credentialSourceConfigured: true,
+                cliSocketEnabled: false,
+                authMode: .grokCLISession
+            )
+        )
+        XCTAssertTrue(
+            SettingsStore.SpeechModel.isGrokSTTSelectable(
+                catalogVisible: true,
+                activateEnabled: true,
+                credentialSourceConfigured: true,
+                cliSocketEnabled: false,
+                authMode: .apiKey
+            )
+        )
     }
 
     func testLocalSpeechModelResolutionDoesNotEvaluateGrokCredentialAvailability() {

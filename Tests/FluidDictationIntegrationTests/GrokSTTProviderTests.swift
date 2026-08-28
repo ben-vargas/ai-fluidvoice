@@ -31,16 +31,37 @@ final class GrokSTTProviderTests: XCTestCase {
         }
     }
 
-    func testModelsExistOnDiskIsFalseAndRESTStubsThrow() async {
+    func testModelsExistOnDiskIsFalse() {
         let provider = makeGrokSTTProvider()
         XCTAssertFalse(provider.modelsExistOnDisk())
         XCTAssertTrue(provider.shouldClearCacheAfterCancellation == false)
-        do {
-            _ = try await provider.transcribeFinal([0.1])
-            XCTFail("REST stub must throw until PR3b")
-        } catch {
-            XCTAssertEqual((error as? GrokSTTError)?.numericCode, GrokSTTError.server(status: 501, message: "").numericCode)
-        }
+    }
+
+    func testMakeStreamingSessionReturnsWebSocketSession() throws {
+        let provider = GrokSTTProvider(resolver: StubGrokSTTResolver())
+        let session = try provider.makeStreamingSession(configuration: .grokDictation)
+        XCTAssertTrue(session is GrokSTTWebSocketSession)
+        XCTAssertFalse(session is GrokSTTFakeSession)
+    }
+
+    func testTranscribeFinalUsesRESTClientOffMain() async throws {
+        let http = FakeGrokSTTHTTPClient()
+        http.enqueue(status: 200, json: ["text": "rest-final"])
+        let resolver = StubGrokSTTResolver()
+        let provider = GrokSTTProvider(
+            resolver: resolver,
+            restClient: GrokSTTRESTClient(resolver: resolver, http: http)
+        )
+        let result = try await provider.transcribeFinal([0.25, 0.5])
+        XCTAssertEqual(result.text, "rest-final")
+        XCTAssertEqual(http.requests.count, 1)
+    }
+
+    func testWireLanguageCodeOmitsAutoAndMapsTl() {
+        XCTAssertNil(GrokSTTProvider.wireLanguageCode(nil))
+        XCTAssertNil(GrokSTTProvider.wireLanguageCode("auto"))
+        XCTAssertEqual(GrokSTTProvider.wireLanguageCode("fil"), "fil")
+        XCTAssertEqual(GrokSTTProvider.wireLanguageCode("tl"), "fil")
     }
 
     func testPrepareDoesNotSecondCallWhenModelsMissing() async throws {

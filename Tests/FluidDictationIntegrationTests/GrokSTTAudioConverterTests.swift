@@ -19,6 +19,16 @@ final class GrokSTTAudioConverterTests: XCTestCase {
         XCTAssertEqual(value, expected)
     }
 
+    func testWavHeaderPlusPCM16() {
+        let samples = [Float](repeating: 0.5, count: 1_600)
+        let wav = GrokSTTAudioConverter.wav(fromFloat32: samples)
+        XCTAssertEqual(wav.count, 44 + 3_200)
+        XCTAssertEqual(String(bytes: wav.prefix(4), encoding: .ascii), "RIFF")
+        XCTAssertEqual(String(bytes: wav.dropFirst(8).prefix(4), encoding: .ascii), "WAVE")
+        let pcm = GrokSTTAudioConverter.pcm16LE(fromFloat32: samples)
+        XCTAssertEqual(wav.suffix(pcm.count), pcm)
+    }
+
     func testPlusMinusOneClamp() {
         let data = GrokSTTAudioConverter.pcm16LE(fromFloat32: [2.0, -2.0, 1.0, -1.0])
         let values: [Int16] = data.withUnsafeBytes { raw in
