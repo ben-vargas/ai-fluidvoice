@@ -35,3 +35,13 @@ No items.
 ## PR1 round 3
 
 - **Cloud disclosure row hardcodes "xAI" behind a generic isCloudEngine gate** (`Sources/Fluid/UI/AISettingsView+SpeechRecognition.swift`). AISettingsView+SpeechRecognition.swift:228-236 renders the warning for any `model.isCloudEngine`, but the string is provider-specific ("Audio is sent to xAI."). Grok is the only cloud engine today so this is correct as shipped, but the gate and the copy are coupled to different things — a second cloud engine would silently claim its audio goes to xAI. `model.brandName` is already available on the card (used at :941/:962 for the badge). Suggested: Interpolate the provider: `Text("Audio is sent to \(model.brandName). This engine is opt-in and is not local-first.")`, or leave as-is and note the coupling for whichever PR adds a second cloud engine.
+
+## PR2 review round 1
+
+### Codex
+
+No leftover minors. The GrokSTTError.server payload item was filed as blocking and fixed in this round (sanitize at `fromHTTPStatus`, redacted `description` / `debugDescription`, U19 covers describing and reflecting).
+
+### Claude
+
+- **GrokSTTError.server retains the unsanitized server message in its payload** (`Sources/Fluid/Services/GrokSTT/GrokSTTError.swift`). Filed as minor here and as blocking by Codex. Fixed in this round: server messages are sanitized before storage, and `String(describing:)` / `String(reflecting:)` no longer dump the raw associated value.
