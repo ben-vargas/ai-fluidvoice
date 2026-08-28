@@ -413,6 +413,78 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         XCTAssertEqual(session.currentState, .failed)
     }
 
+    func testWebSocketSessionConfigurationDoesNotCapResourceToConnectTimeout() {
+        let configuration = GrokSTTURLSessionWebSocketConnection.makeSessionConfiguration()
+        XCTAssertFalse(configuration.waitsForConnectivity)
+        XCTAssertEqual(
+            configuration.timeoutIntervalForRequest,
+            GrokSTTURLSessionWebSocketTransport.connectTimeout
+        )
+        XCTAssertNotEqual(
+            configuration.timeoutIntervalForResource,
+            GrokSTTURLSessionWebSocketTransport.connectTimeout
+        )
+        XCTAssertTrue(
+            configuration.timeoutIntervalForResource == 0
+                || configuration.timeoutIntervalForResource > 10 * 60,
+            "resource timeout must not cap a long dictation hold"
+        )
+    }
+
+    func testDelayedResolverHangingConnectTimesOutWithinCreatedBudget() async {
+        let transport = FakeGrokSTTWebSocketTransport()
+        transport.hangNextConnect()
+        let resolver = RecordingGrokSTTResolver()
+        resolver.resolveDelayNanoseconds = 150_000_000
+        let session = GrokSTTWebSocketSession(
+            configuration: .grokDictation,
+            resolver: resolver,
+            transport: transport,
+            createdBudget: 0.6
+        )
+        let started = Date()
+        do {
+            try await Task.detached { try await session.start() }.value
+            XCTFail("delayed resolver plus hanging connect must timeout")
+        } catch {
+            XCTAssertEqual(error as? GrokSTTError, .timeout)
+        }
+        let elapsed = Date().timeIntervalSince(started)
+        XCTAssertLessThan(elapsed, 2, "created budget must bound handshake, not add a fresh 20s connect")
+        XCTAssertGreaterThanOrEqual(elapsed, 0.45)
+        XCTAssertTrue(transport.connectWasCancelled)
+        XCTAssertEqual(transport.requests.count, 1)
+        let handshakeTimeout = transport.requests.first?.timeoutInterval ?? -1
+        XCTAssertGreaterThan(handshakeTimeout, 0)
+        XCTAssertLessThan(handshakeTimeout, 0.6)
+    }
+
+    func testCancelDuringConnectAbortsPendingOpen() async {
+        let transport = FakeGrokSTTWebSocketTransport()
+        transport.hangNextConnect()
+        let session = GrokSTTWebSocketSession(
+            configuration: .grokDictation,
+            resolver: RecordingGrokSTTResolver(),
+            transport: transport
+        )
+        let start = Task.detached { try await session.start() }
+        await transport.connectStarted.wait()
+        start.cancel()
+        session.cancel()
+        do {
+            try await start.value
+            XCTFail("cancel during connect must not hang")
+        } catch {
+            let grok = error as? GrokSTTError
+            XCTAssertTrue(
+                grok == .cancelled || error is CancellationError,
+                "expected cancelled, got \(error)"
+            )
+        }
+        XCTAssertTrue(transport.connectWasCancelled)
+        XCTAssertEqual(session.currentState, .cancelled)
+    }
+
     func testPartialDoneTimeoutSucceedsAndCloses() async throws {
         let transport = FakeGrokSTTWebSocketTransport()
         let connection = FakeGrokSTTWebSocketConnection()

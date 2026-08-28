@@ -87,8 +87,12 @@ final class FakeGrokSTTWebSocketConnection: GrokSTTWebSocketConnection, @uncheck
 final class FakeGrokSTTWebSocketTransport: GrokSTTWebSocketTransporting, @unchecked Sendable {
     private let lock = NSLock()
     private var connectResults: [Result<FakeGrokSTTWebSocketConnection, Error>] = []
+    private var hangConnect = false
+    private var hangingContinuations: [CheckedContinuation<FakeGrokSTTWebSocketConnection, Error>] = []
     private(set) var requests: [URLRequest] = []
     private(set) var connections: [FakeGrokSTTWebSocketConnection] = []
+    private(set) var connectWasCancelled = false
+    let connectStarted = TestGate()
 
     func enqueueConnection(_ connection: FakeGrokSTTWebSocketConnection) {
         self.lock.withLock { self.connectResults.append(.success(connection)) }
@@ -98,9 +102,19 @@ final class FakeGrokSTTWebSocketTransport: GrokSTTWebSocketTransporting, @unchec
         self.lock.withLock { self.connectResults.append(.failure(error)) }
     }
 
+    func hangNextConnect() {
+        self.lock.withLock { self.hangConnect = true }
+    }
+
     func connect(request: URLRequest) async throws -> any GrokSTTWebSocketConnection {
-        let result: Result<FakeGrokSTTWebSocketConnection, Error> = self.lock.withLock {
+        let shouldHang = self.lock.withLock { () -> Bool in
             self.requests.append(request)
+            return self.hangConnect
+        }
+        if shouldHang {
+            return try await self.awaitHangingConnect()
+        }
+        let result: Result<FakeGrokSTTWebSocketConnection, Error> = self.lock.withLock {
             if self.connectResults.isEmpty {
                 let connection = FakeGrokSTTWebSocketConnection()
                 self.connections.append(connection)
@@ -113,6 +127,30 @@ final class FakeGrokSTTWebSocketTransport: GrokSTTWebSocketTransporting, @unchec
             return next
         }
         return try result.get()
+    }
+
+    private func awaitHangingConnect() async throws -> FakeGrokSTTWebSocketConnection {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                self.lock.lock()
+                if Task.isCancelled {
+                    self.connectWasCancelled = true
+                    self.lock.unlock()
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                self.hangingContinuations.append(continuation)
+                self.lock.unlock()
+                self.connectStarted.signal()
+            }
+        } onCancel: {
+            self.lock.lock()
+            self.connectWasCancelled = true
+            let waiters = self.hangingContinuations
+            self.hangingContinuations = []
+            self.lock.unlock()
+            waiters.forEach { $0.resume(throwing: CancellationError()) }
+        }
     }
 }
 
@@ -153,6 +191,7 @@ final class RecordingGrokSTTResolver: GrokSTTCredentialResolving, @unchecked Sen
     var isSourceConfigured: Bool
     var credential: GrokSTTCredential
     var alternate: GrokSTTCredential?
+    var resolveDelayNanoseconds: UInt64 = 0
     private(set) var unauthorizedCallCount = 0
 
     init(
@@ -178,7 +217,11 @@ final class RecordingGrokSTTResolver: GrokSTTCredentialResolving, @unchecked Sen
     }
 
     func resolveCredential() async throws -> GrokSTTCredential {
-        self.credential
+        let delay = self.resolveDelayNanoseconds
+        if delay > 0 {
+            try await Task.sleep(nanoseconds: delay)
+        }
+        return self.credential
     }
 
     func resolveCredentialAfterUnauthorized(rejectedBearerFingerprint: String) async throws -> GrokSTTCredential {

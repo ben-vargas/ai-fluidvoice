@@ -45,6 +45,8 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
     private var didRetryUnauthorized = false
     private var createdWaiters: [CheckedContinuation<Void, Error>] = []
     private var finishWaiters: [CheckedContinuation<String, Error>] = []
+    private var connectAbortWaiters: [CheckedContinuation<Void, Error>] = []
+    private var connectAborted = false
     private var senderRunning = false
 
     init(
@@ -127,6 +129,9 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
 
         do {
             try await self.connectAndWaitCreated()
+        } catch is CancellationError {
+            self.fail(.cancelled, close: true)
+            throw GrokSTTError.cancelled
         } catch {
             self.fail(self.mapError(error), close: true)
             throw self.lock.withLock({ self.stickyError }) ?? self.mapError(error)
@@ -220,11 +225,14 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
         self.lock.lock()
         let alreadyTerminal = self.state == .cancelled || self.state == .complete
         self.state = .cancelled
+        self.connectAborted = true
         let outboundWaiters = self.abortOutboundLocked()
         let created = self.createdWaiters
         self.createdWaiters = []
         let finishers = self.finishWaiters
         self.finishWaiters = []
+        let connectAbort = self.connectAbortWaiters
+        self.connectAbortWaiters = []
         let connection = self.connection
         self.connection = nil
         let receiveTask = self.receiveTask
@@ -234,6 +242,7 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
         outboundWaiters.forEach { $0.resume(throwing: GrokSTTError.cancelled) }
         created.forEach { $0.resume(throwing: GrokSTTError.cancelled) }
         finishers.forEach { $0.resume(throwing: GrokSTTError.cancelled) }
+        connectAbort.forEach { $0.resume(throwing: GrokSTTError.cancelled) }
         receiveTask?.cancel()
         if !alreadyTerminal {
             connection?.close()
@@ -260,7 +269,9 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
     // MARK: - Connect
 
     private func connectAndWaitCreated() async throws {
-        var credential = try await self.resolver.resolveCredential()
+        var credential = try await self.withCreatedBudget {
+            try await self.resolver.resolveCredential()
+        }
         if credential.source == .grokCLISession, !self.cliSocketEnabled {
             throw GrokSTTError.server(
                 status: 501,
@@ -271,9 +282,14 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
 
         while true {
             try Task.checkCancellation()
-            let request = Self.makeRequest(configuration: self.configuration, credential: credential)
+            let remaining = self.remainingCreatedBudget()
+            if remaining <= 0 {
+                throw GrokSTTError.timeout
+            }
+            var request = Self.makeRequest(configuration: self.configuration, credential: credential)
+            request.timeoutInterval = remaining
             do {
-                let connection = try await self.transport.connect(request: request)
+                let connection = try await self.connectWithCreatedBudget(request: request)
                 self.lock.withLock {
                     self.connection = connection
                     if self.state == .connecting {
@@ -290,9 +306,11 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
                    !self.lock.withLock({ self.didRetryUnauthorized })
                 {
                     self.lock.withLock { self.didRetryUnauthorized = true }
-                    credential = try await self.resolver.resolveCredentialAfterUnauthorized(
-                        rejectedBearerFingerprint: credential.bearerFingerprint
-                    )
+                    credential = try await self.withCreatedBudget {
+                        try await self.resolver.resolveCredentialAfterUnauthorized(
+                            rejectedBearerFingerprint: credential.bearerFingerprint
+                        )
+                    }
                     self.lock.withLock { self.credential = credential }
                     self.closeConnection()
                     continue
@@ -300,6 +318,75 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
                 throw mapped
             }
         }
+    }
+
+    private func connectWithCreatedBudget(request: URLRequest) async throws -> any GrokSTTWebSocketConnection {
+        try await self.withCreatedBudget {
+            UncheckedConnection(connection: try await self.transport.connect(request: request))
+        }.connection
+    }
+
+    private func withCreatedBudget<T: Sendable>(
+        _ operation: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        let remaining = self.remainingCreatedBudget()
+        if remaining <= 0 {
+            throw GrokSTTError.timeout
+        }
+        return try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask {
+                try await operation()
+            }
+            group.addTask {
+                try await Task.sleep(nanoseconds: Self.nanoseconds(for: remaining))
+                throw GrokSTTError.timeout
+            }
+            group.addTask {
+                try await self.awaitConnectAbort()
+                throw GrokSTTError.cancelled
+            }
+            do {
+                let value = try await group.next()!
+                group.cancelAll()
+                return value
+            } catch {
+                group.cancelAll()
+                throw error
+            }
+        }
+    }
+
+    private func awaitConnectAbort() async throws {
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                self.lock.lock()
+                if Task.isCancelled {
+                    self.lock.unlock()
+                    continuation.resume(throwing: CancellationError())
+                    return
+                }
+                if self.connectAborted || self.state == .cancelled {
+                    self.lock.unlock()
+                    continuation.resume(throwing: GrokSTTError.cancelled)
+                    return
+                }
+                self.connectAbortWaiters.append(continuation)
+                self.lock.unlock()
+            }
+        } onCancel: {
+            self.lock.lock()
+            let waiters = self.connectAbortWaiters
+            self.connectAbortWaiters = []
+            self.lock.unlock()
+            waiters.forEach { $0.resume(throwing: CancellationError()) }
+        }
+    }
+
+    private static func nanoseconds(for interval: TimeInterval) -> UInt64 {
+        let nanoseconds = interval * 1_000_000_000
+        if nanoseconds <= 0 { return 0 }
+        if nanoseconds >= Double(UInt64.max) { return UInt64.max }
+        return UInt64(nanoseconds)
     }
 
     static func makeRequest(
@@ -835,8 +922,15 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
     }
 
     private func mapError(_ error: Error) -> GrokSTTError {
-        GrokSTTTransportErrorMapper.map(error)
+        if error is CancellationError {
+            return .cancelled
+        }
+        return GrokSTTTransportErrorMapper.map(error)
     }
+}
+
+private struct UncheckedConnection: @unchecked Sendable {
+    let connection: any GrokSTTWebSocketConnection
 }
 
 private nonisolated struct GrokSTTServerEvent: Decodable, Sendable {

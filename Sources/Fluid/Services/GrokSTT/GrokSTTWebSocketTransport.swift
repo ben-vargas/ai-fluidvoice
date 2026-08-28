@@ -69,7 +69,11 @@ final nonisolated class GrokSTTURLSessionWebSocketTransport: NSObject, GrokSTTWe
 
     func connect(request: URLRequest) async throws -> any GrokSTTWebSocketConnection {
         let connection = GrokSTTURLSessionWebSocketConnection()
-        try await connection.open(request: request)
+        try await withTaskCancellationHandler {
+            try await connection.open(request: request)
+        } onCancel: {
+            connection.close()
+        }
         return connection
     }
 }
@@ -83,21 +87,44 @@ final nonisolated class GrokSTTURLSessionWebSocketConnection: NSObject, URLSessi
     private var closed = false
     private var httpStatus: Int?
 
-    func open(request: URLRequest) async throws {
+    /// Handshake timeouts only. Do not set `timeoutIntervalForResource` to the
+    /// connect budget — that caps the whole dictation, not the upgrade.
+    static func makeSessionConfiguration(
+        connectTimeout: TimeInterval = GrokSTTURLSessionWebSocketTransport.connectTimeout
+    ) -> URLSessionConfiguration {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.waitsForConnectivity = false
-        configuration.timeoutIntervalForRequest = GrokSTTURLSessionWebSocketTransport.connectTimeout
-        configuration.timeoutIntervalForResource = GrokSTTURLSessionWebSocketTransport.connectTimeout
+        configuration.timeoutIntervalForRequest = connectTimeout
+        return configuration
+    }
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-            let task = session.webSocketTask(with: request)
-            self.lock.lock()
-            self.openContinuation = continuation
-            self.urlSession = session
-            self.task = task
-            self.lock.unlock()
-            task.resume()
+    func open(request: URLRequest) async throws {
+        let connectTimeout = request.timeoutInterval > 0
+            ? request.timeoutInterval
+            : GrokSTTURLSessionWebSocketTransport.connectTimeout
+        let configuration = Self.makeSessionConfiguration(connectTimeout: connectTimeout)
+
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+                let task = session.webSocketTask(with: request)
+                self.lock.lock()
+                if self.closed || self.didResumeOpen {
+                    self.lock.unlock()
+                    task.cancel(with: .goingAway, reason: nil)
+                    session.invalidateAndCancel()
+                    continuation.resume(throwing: GrokSTTError.cancelled)
+                    return
+                }
+                self.openContinuation = continuation
+                self.urlSession = session
+                self.task = task
+                self.lock.unlock()
+                task.resume()
+            }
+        } onCancel: {
+            self.resumeOpen(.failure(GrokSTTError.cancelled))
+            self.close()
         }
     }
 
