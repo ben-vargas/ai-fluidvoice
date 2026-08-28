@@ -2,7 +2,7 @@ import Foundation
 
 /// A thread-safe wrapper around a float array to prevent data races between
 /// the audio engine (background thread) and the ASR service (main thread).
-final nonisolated class ThreadSafeAudioBuffer {
+final nonisolated class ThreadSafeAudioBuffer: @unchecked Sendable {
     private var buffer: [Float] = []
     private let lock = NSLock()
 

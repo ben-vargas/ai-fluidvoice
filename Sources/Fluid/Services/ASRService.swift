@@ -266,8 +266,29 @@ final class ASRService: ObservableObject {
     private var externalCoreMLProvider: ExternalCoreMLTranscriptionProvider?
     private var nemotronProviders: [NemotronProvider.Mode: NemotronProvider] = [:]
     private var whisperProvider: WhisperProvider?
-    private var grokSTTProvider: GrokSTTCatalogStubProvider?
+    private var grokSTTProvider: GrokSTTProvider?
     private var appleSpeechProvider: AppleSpeechProvider?
+    private var activeStreamingSession: StreamingTranscriptionSession?
+    private var sessionPumpTask: Task<Void, Never>?
+    private let sessionPumpGate = GrokSTTSessionPumpGate()
+    private var sessionTransportError: GrokSTTError?
+    private var createdReceived = false
+    private let grokRetryStore = GrokSTTRetryStore()
+    private var isSessionDictation = false
+    private var lastGrokLanguageCode: String?
+
+    #if DEBUG
+    var testBypassHardwareCapture = false
+    var testTranscriptionProviderOverride: TranscriptionProvider?
+    var testStreamingSessionFactory: ((StreamingSTTSessionConfiguration) throws -> StreamingTranscriptionSession)?
+    #endif
+
+    var isCloudSessionActive: Bool {
+        self.transcriptionProvider is StreamingTranscriptionProviding
+            && (self.isRunning || self.isStarting || self.activeStreamingSession != nil)
+    }
+
+    var hasPendingSTTRetry: Bool { self.grokRetryStore.hasPending }
     /// Stored as Any? because @available cannot be applied to stored properties
     private var _appleSpeechAnalyzerProvider: Any?
 
@@ -337,6 +358,7 @@ final class ASRService: ObservableObject {
         _ = await downloadTask?.result
         await self.providerResetDrain?.task.value
         await self.transcriptionExecutor.cancelAndAwaitPending()
+        await self.cancelStreamingSession(clearRetry: true)
 
         self.fluidAudioProvider = nil
         self.parakeetRealtimeProvider = nil
@@ -354,6 +376,11 @@ final class ASRService: ObservableObject {
     /// The transcription provider, selected based on the unified SpeechModel setting.
     /// Uses the new SettingsStore.selectedSpeechModel instead of old TranscriptionProviderOption.
     private var transcriptionProvider: TranscriptionProvider {
+        #if DEBUG
+        if let override = self.testTranscriptionProviderOverride {
+            return override
+        }
+        #endif
         let model = SettingsStore.shared.selectedSpeechModel
 
         switch model {
@@ -437,13 +464,13 @@ final class ASRService: ObservableObject {
         return provider
     }
 
-    private func getGrokSTTProvider() -> GrokSTTCatalogStubProvider {
+    private func getGrokSTTProvider() -> GrokSTTProvider {
         if let existing = grokSTTProvider {
             return existing
         }
-        let provider = GrokSTTCatalogStubProvider()
+        let provider = GrokSTTProvider()
         self.grokSTTProvider = provider
-        DebugLogger.shared.info("ASRService: Created Grok STT catalog stub provider", source: "ASRService")
+        DebugLogger.shared.info("ASRService: Created Grok STT provider", source: "ASRService")
         return provider
     }
 
@@ -521,7 +548,7 @@ final class ASRService: ObservableObject {
             // Qwen support removed; route legacy requests to Parakeet v3.
             return FluidAudioProvider(modelOverride: .parakeetTDT, configureWordBoosting: false)
         case .grokSTT:
-            return GrokSTTCatalogStubProvider()
+            return GrokSTTProvider()
         case .whisperTiny, .whisperBase, .whisperSmall,
              .whisperMedium, .whisperLargeTurbo, .whisperLarge:
             return WhisperProvider(modelOverride: model)
@@ -655,9 +682,21 @@ final class ASRService: ObservableObject {
         self.parakeetRealtimeProvider = nil
         self.externalCoreMLProvider = nil
         self.whisperProvider = nil
+        let retiringPump = self.sessionPumpTask
+        self.sessionPumpGate.requestStop()
+        self.sessionPumpTask?.cancel()
+        self.sessionPumpTask = nil
+        self.activeStreamingSession?.cancel()
+        self.activeStreamingSession = nil
+        self.sessionTransportError = nil
+        self.createdReceived = false
+        self.isSessionDictation = false
         self.grokSTTProvider = nil
         self.appleSpeechProvider = nil
         self._appleSpeechAnalyzerProvider = nil
+        if let retiringPump {
+            Task { _ = await retiringPump.value }
+        }
 
         // CRITICAL FIX: Check if the NEW model's files exist on disk
         // This prevents UI from showing "Download" when model is already downloaded
@@ -1737,6 +1776,15 @@ final class ASRService: ObservableObject {
     ) async -> AudioCaptureStartOutcome {
         DebugLogger.shared.info("🎤 START() called - beginning recording session", source: "ASRService")
 
+        #if DEBUG
+        if self.testBypassHardwareCapture {
+            return await self.startBypassingHardwareCapture(
+                forDictionaryTraining: forDictionaryTraining,
+                onCaptureStarted: onCaptureStarted
+            )
+        }
+        #endif
+
         guard self.micStatus == .authorized else {
             DebugLogger.shared.error("❌ START() blocked - mic not authorized", source: "ASRService")
             return .failed
@@ -2039,12 +2087,15 @@ final class ASRService: ObservableObject {
 
             // Only start streaming for models that support it (large Whisper models are too slow)
             let model = SettingsStore.shared.selectedSpeechModel
-            if model.supportsStreaming, !forDictionaryTraining {
+            if forDictionaryTraining {
+                DebugLogger.shared.debug("⏸️ Skipping streaming for dictionary training sample", source: "ASRService")
+            } else if self.transcriptionProvider is StreamingTranscriptionProviding {
+                DebugLogger.shared.debug("📡 Starting session transcription...", source: "ASRService")
+                self.startSessionTranscription()
+            } else if model.supportsStreaming {
                 DebugLogger.shared.debug("📡 Starting streaming transcription...", source: "ASRService")
                 self.benchmarkLog("streaming_timer_start intervalMs=\(Int((self.streamingChunkDurationSeconds * 1000).rounded())) minSamples=\(self.minimumStreamingPreviewSamples)")
                 self.startStreamingTranscription()
-            } else if forDictionaryTraining {
-                DebugLogger.shared.debug("⏸️ Skipping streaming for dictionary training sample", source: "ASRService")
             } else {
                 DebugLogger.shared.debug("⏸️ Skipping streaming - model '\(model.displayName)' does not support real-time chunk processing", source: "ASRService")
             }
@@ -2383,6 +2434,7 @@ final class ASRService: ObservableObject {
         // Set isRunning to false before teardown so in-flight ASR chunks stop safely.
         DebugLogger.shared.debug("🚫 Setting isRunning = false...", source: "ASRService")
         self.isRunning = false
+        self.sessionPumpGate.requestStop()
         DebugLogger.shared.debug("✅ isRunning disabled", source: "ASRService")
 
         // Stop monitoring device to prevent callbacks after stop
@@ -2425,6 +2477,8 @@ final class ASRService: ObservableObject {
         DebugLogger.shared.debug("⏳ Awaiting stopStreamingTimerAndAwait()...", source: "ASRService")
         let streamingStopStartedAt = Date().timeIntervalSince1970
         await self.stopStreamingTimerAndAwait()
+        await self.sessionPumpTask?.value
+        self.sessionPumpTask = nil
         self.benchmarkLog("stop_streaming_wait elapsedMs=\(self.elapsedMilliseconds(since: streamingStopStartedAt))")
         DebugLogger.shared.debug("✅ stopStreamingTimerAndAwait() completed", source: "ASRService")
 
@@ -2438,6 +2492,15 @@ final class ASRService: ObservableObject {
         self.audioBuffer.clear()
         let capturedPCM = pcm
         self.benchmarkLog("stop_audio_drained samples=\(pcm.count) audioMs=\(Int((Double(pcm.count) / 16_000.0 * 1000).rounded()))")
+
+        if self.isSessionDictation || self.transcriptionProvider is StreamingTranscriptionProviding {
+            return await self.finishSessionTranscription(
+                capturedPCM: capturedPCM,
+                shouldResumeMedia: shouldResumeMedia,
+                stopStartedAt: stopStartedAt,
+                useDictionaryTrainingPath: useDictionaryTrainingPath
+            )
+        }
 
         // Drop recordings with no audio at all — nothing to transcribe.
         guard !pcm.isEmpty else {
@@ -2803,6 +2866,7 @@ final class ASRService: ObservableObject {
 
         // CRITICAL: Set isRunning to false FIRST to signal any in-flight chunks to abort early
         self.isRunning = false
+        self.sessionPumpGate.requestStop()
         self.audioCapturePipeline.setRecordingEnabled(false)
 
         // Stop monitoring device
@@ -2821,6 +2885,15 @@ final class ASRService: ObservableObject {
         // CRITICAL FIX: Await completion of streaming task AND any pending transcriptions
         // This prevents use-after-free crashes (EXC_BAD_ACCESS) when clearing buffer
         await self.stopStreamingTimerAndAwait()
+        self.sessionPumpTask?.cancel()
+        await self.sessionPumpTask?.value
+        self.sessionPumpTask = nil
+        self.activeStreamingSession?.cancel()
+        self.activeStreamingSession = nil
+        self.sessionTransportError = nil
+        self.createdReceived = false
+        self.isSessionDictation = false
+        self.grokRetryStore.clear()
 
         // NOW it's safe to clear the buffer
         self.audioBuffer.clear()
@@ -4313,7 +4386,16 @@ final class ASRService: ObservableObject {
             // Set correct loading state based on whether models are cached.
             try Task.checkCancellation()
             guard self.ensureReadyOperationID == operationID else { throw CancellationError() }
-            if modelsAlreadyCached {
+            let isCloudProvider =
+                provider is StreamingTranscriptionProviding
+                || SettingsStore.shared.selectedSpeechModel.isCloudEngine
+            if isCloudProvider {
+                self.isDownloadingModel = false
+                self.isLoadingModel = true
+                self.downloadProgress = nil
+                self.modelPreparationPhase = .loading
+                DebugLogger.shared.info("☁️ LOADING cloud speech engine...", source: "ASRService")
+            } else if modelsAlreadyCached {
                 self.isLoadingModel = true
                 self.isDownloadingModel = false
                 self.downloadProgress = nil
@@ -4369,7 +4451,11 @@ final class ASRService: ObservableObject {
                 self.modelPreparationPhase = nil
             }
             self.downloadProgress = nil
-            self.modelsExistOnDisk = true
+            if provider is StreamingTranscriptionProviding || SettingsStore.shared.selectedSpeechModel.isCloudEngine {
+                self.modelsExistOnDisk = false
+            } else {
+                self.modelsExistOnDisk = true
+            }
 
             let totalDuration = Date().timeIntervalSince(initializationStart)
             DebugLogger.shared.info("=== ASR INITIALIZATION COMPLETE ===", source: "ASRService")
@@ -4660,9 +4746,390 @@ final class ASRService: ObservableObject {
         await self.checkIfModelsExistAsync()
     }
 
+    // MARK: - Streaming session transcription (Grok)
+
+    private func startSessionTranscription() {
+        self.grokRetryStore.clear()
+        self.sessionTransportError = nil
+        self.createdReceived = false
+        self.isSessionDictation = true
+        self.lastGrokLanguageCode = SettingsStore.shared.selectedGrokSTTLanguageCode
+        self.sessionPumpGate.begin()
+
+        guard let sessionProvider = self.transcriptionProvider as? StreamingTranscriptionProviding else {
+            self.sessionTransportError = .noCredentialConfigured
+            return
+        }
+
+        let configuration = StreamingSTTSessionConfiguration(
+            sampleRate: GrokSTTAudioConverter.sampleRate,
+            languageCode: self.lastGrokLanguageCode,
+            keyterms: GrokSTTKeytermBuilder.terms(),
+            interimResults: true
+        )
+
+        do {
+            #if DEBUG
+            if let factory = self.testStreamingSessionFactory {
+                self.activeStreamingSession = try factory(configuration)
+            } else {
+                self.activeStreamingSession = try sessionProvider.makeStreamingSession(configuration: configuration)
+            }
+            #else
+            self.activeStreamingSession = try sessionProvider.makeStreamingSession(configuration: configuration)
+            #endif
+        } catch {
+            self.sessionTransportError = (error as? GrokSTTError) ?? .noCredentialConfigured
+            self.activeStreamingSession = nil
+            DebugLogger.shared.error(
+                "GrokSTT makeStreamingSession failed: \(self.sessionTransportError?.description ?? error.localizedDescription)",
+                source: "GrokSTT"
+            )
+            return
+        }
+
+        guard let session = self.activeStreamingSession else { return }
+        session.onPartial = { [weak self] text in
+            self?.applySessionPartial(text)
+        }
+
+        let audioBuffer = self.audioBuffer
+        let gate = self.sessionPumpGate
+        self.sessionPumpTask = Task.detached { [session] in
+            await GrokSTTSessionPump.run(audioBuffer: audioBuffer, gate: gate, session: session)
+        }
+
+        Task { [weak self, session] in
+            do {
+                try await session.start()
+                gate.markCreated()
+                await MainActor.run {
+                    guard let self, self.activeStreamingSession === session else { return }
+                    self.createdReceived = true
+                }
+            } catch {
+                let grokError = (error as? GrokSTTError) ?? .timeout
+                gate.setTransportError(grokError)
+                await MainActor.run {
+                    guard let self, self.activeStreamingSession === session else { return }
+                    if self.isRunning {
+                        self.sessionTransportError = grokError
+                    }
+                }
+            }
+        }
+    }
+
+    private func applySessionPartial(_ text: String) {
+        let newText = ASRService.applySpokenPunctuationFormatting(
+            ASRService.applyCustomDictionary(ASRService.removeFillerWords(text))
+        )
+        self.partialTranscription = newText
+        if !newText.isEmpty, !self.hasCompletedFirstTranscription {
+            self.hasCompletedFirstTranscription = true
+            self.isLoadingModel = false
+            self.modelPreparationPhase = nil
+        }
+    }
+
+    private func finishSessionTranscription(
+        capturedPCM: [Float],
+        shouldResumeMedia: Bool,
+        stopStartedAt: TimeInterval,
+        useDictionaryTrainingPath: Bool
+    ) async -> String {
+        let result = await self.finishSessionTranscriptionBody(
+            capturedPCM: capturedPCM,
+            stopStartedAt: stopStartedAt,
+            useDictionaryTrainingPath: useDictionaryTrainingPath
+        )
+        if shouldResumeMedia {
+            await MediaPlaybackService.shared.resumeIfWePaused(true)
+        }
+        return result
+    }
+
+    private func finishSessionTranscriptionBody(
+        capturedPCM: [Float],
+        stopStartedAt: TimeInterval,
+        useDictionaryTrainingPath: Bool
+    ) async -> String {
+        let session = self.activeStreamingSession
+        let sticky = self.sessionTransportError ?? session?.transportError
+        let gateSnapshot = self.sessionPumpGate.snapshot
+        let created = self.createdReceived || gateSnapshot.createdReceived
+        let sentCursor = gateSnapshot.sentCursor
+
+        if capturedPCM.isEmpty && (session?.transcript ?? "").isEmpty && sticky == nil {
+            await self.cancelStreamingSession(clearRetry: false)
+            self.lastStopOutcome = .empty
+            self.benchmarkLog("stop_end result=empty totalMs=\(self.elapsedMilliseconds(since: stopStartedAt)) reason=no_audio")
+            return ""
+        }
+
+        if useDictionaryTrainingPath {
+            await self.cancelStreamingSession(clearRetry: true)
+            self.surfaceGrokError(.dictionaryTrainingUnsupported)
+            self.lastStopOutcome = .failed
+            return ""
+        }
+
+        // Pre-`audio.done` drop: do not insert assembler partials (CONVERGED-ARCHITECTURE).
+        guard let session, sticky == nil else {
+            return await self.completeSessionWithRESTOrRetry(
+                capturedPCM: capturedPCM,
+                error: sticky ?? .noCredentialConfigured,
+                stopStartedAt: stopStartedAt
+            )
+        }
+
+        if !created {
+            session.handoffUnsentPCM(capturedPCM)
+        } else if sentCursor < capturedPCM.count {
+            let tail = Array(capturedPCM[sentCursor...])
+            if !tail.isEmpty {
+                session.append(pcm16: GrokSTTAudioConverter.pcm16LE(fromFloat32: tail[...]))
+            }
+        }
+
+        var text = session.transcript
+        do {
+            text = try await session.finish()
+        } catch {
+            text = session.transcript
+            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let grokError = (error as? GrokSTTError) ?? .timeout
+                return await self.completeSessionWithRESTOrRetry(
+                    capturedPCM: capturedPCM,
+                    error: grokError,
+                    stopStartedAt: stopStartedAt
+                )
+            }
+        }
+
+        await self.cancelStreamingSession(clearRetry: false)
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            let outputText = ASRService.applySpokenPunctuationFormatting(
+                ASRService.applyCustomDictionary(ASRService.removeFillerWords(text))
+            )
+            self.recordSuccessfulSessionStop(outputText: outputText, capturedPCM: capturedPCM, stopStartedAt: stopStartedAt)
+            return outputText
+        }
+
+        return await self.completeSessionWithRESTOrRetry(
+            capturedPCM: capturedPCM,
+            error: .emptyTranscript,
+            stopStartedAt: stopStartedAt
+        )
+    }
+
+    private func completeSessionWithRESTOrRetry(
+        capturedPCM: [Float],
+        error: GrokSTTError,
+        stopStartedAt: TimeInterval
+    ) async -> String {
+        await self.cancelStreamingSession(clearRetry: false)
+        let provider = self.transcriptionProvider
+        if provider.isReady {
+            do {
+                let result = try await self.transcriptionExecutor.run { [provider] in
+                    try await provider.transcribeFinal(capturedPCM)
+                }
+                let outputText = ASRService.applySpokenPunctuationFormatting(
+                    ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
+                )
+                if !outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    self.recordSuccessfulSessionStop(
+                        outputText: outputText,
+                        capturedPCM: capturedPCM,
+                        stopStartedAt: stopStartedAt
+                    )
+                    return outputText
+                }
+                self.grokRetryStore.retain(
+                    samples: capturedPCM,
+                    error: .emptyTranscript,
+                    languageCode: self.lastGrokLanguageCode
+                )
+                self.surfaceGrokError(.emptyTranscript)
+                self.lastStopOutcome = .failed
+                return ""
+            } catch {
+                let grokError = (error as? GrokSTTError) ?? error.asGrokSTTError()
+                self.grokRetryStore.retain(
+                    samples: capturedPCM,
+                    error: grokError,
+                    languageCode: self.lastGrokLanguageCode
+                )
+                self.surfaceGrokError(grokError)
+                self.lastStopOutcome = .failed
+                return ""
+            }
+        }
+
+        self.grokRetryStore.retain(
+            samples: capturedPCM,
+            error: error,
+            languageCode: self.lastGrokLanguageCode
+        )
+        self.surfaceGrokError(error)
+        self.lastStopOutcome = .failed
+        self.benchmarkLog("stop_end result=error totalMs=\(self.elapsedMilliseconds(since: stopStartedAt)) error=\(error.description)")
+        return ""
+    }
+
+    private func recordSuccessfulSessionStop(
+        outputText: String,
+        capturedPCM: [Float],
+        stopStartedAt: TimeInterval
+    ) {
+        if !self.hasCompletedFirstTranscription {
+            self.hasCompletedFirstTranscription = true
+            self.isLoadingModel = false
+            self.modelPreparationPhase = nil
+        }
+        self.recordWordBoostHitIfAny(transcribedText: outputText)
+        if SettingsStore.shared.saveTranscriptionHistory,
+           SettingsStore.shared.saveAudioWithTranscriptionHistory,
+           !capturedPCM.isEmpty
+        {
+            self.lastCompletedAudioSnapshot = DictationAudioSnapshot(
+                samples: capturedPCM,
+                sampleRate: 16_000,
+                channels: 1
+            )
+        }
+        self.lastStopOutcome = outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? .empty
+            : .success
+        self.benchmarkLog("stop_end result=success totalMs=\(self.elapsedMilliseconds(since: stopStartedAt)) cleanedChars=\(outputText.count)")
+    }
+
+    private func surfaceGrokError(_ error: GrokSTTError) {
+        self.errorTitle = "Speech-to-text failed"
+        self.errorMessage = error.errorDescription ?? "Speech-to-text failed."
+        self.showError = true
+        DebugLogger.shared.error(
+            "GrokSTT failure: \(error.description)",
+            source: "GrokSTT"
+        )
+    }
+
+    private func cancelStreamingSession(clearRetry: Bool) async {
+        self.sessionPumpGate.requestStop()
+        self.sessionPumpTask?.cancel()
+        await self.sessionPumpTask?.value
+        self.sessionPumpTask = nil
+        self.activeStreamingSession?.cancel()
+        self.activeStreamingSession = nil
+        self.sessionTransportError = nil
+        self.createdReceived = false
+        self.isSessionDictation = false
+        if clearRetry {
+            self.grokRetryStore.clear()
+        }
+    }
+
+    func retryPendingGrokTranscription() async -> String {
+        guard let pending = self.grokRetryStore.consume() else { return "" }
+        let provider = self.transcriptionProvider
+        do {
+            let result = try await self.transcriptionExecutor.run { [provider] in
+                try await provider.transcribeFinal(pending.samples)
+            }
+            let outputText = ASRService.applySpokenPunctuationFormatting(
+                ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
+            )
+            if outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                self.grokRetryStore.retain(
+                    samples: pending.samples,
+                    error: .emptyTranscript,
+                    languageCode: pending.languageCode
+                )
+                self.surfaceGrokError(.emptyTranscript)
+                self.lastStopOutcome = .failed
+                return ""
+            }
+            self.lastStopOutcome = .success
+            return outputText
+        } catch {
+            let grokError = (error as? GrokSTTError) ?? error.asGrokSTTError()
+            self.grokRetryStore.retain(
+                samples: pending.samples,
+                error: grokError,
+                languageCode: pending.languageCode
+            )
+            self.surfaceGrokError(grokError)
+            self.lastStopOutcome = .failed
+            return ""
+        }
+    }
+
+    #if DEBUG
+    func debugProvider(for model: SettingsStore.SpeechModel) -> TranscriptionProvider {
+        self.getProvider(for: model)
+    }
+
+    func debugCachedTranscriptionProvider() -> TranscriptionProvider {
+        self.transcriptionProvider
+    }
+
+    func debugAppendPCM(_ samples: [Float]) {
+        self.audioBuffer.append(samples)
+    }
+
+    var debugAudioBufferCount: Int { self.audioBuffer.count }
+
+    var debugSessionTransportError: GrokSTTError? { self.sessionTransportError }
+
+    var debugCreatedReceived: Bool { self.createdReceived || self.sessionPumpGate.snapshot.createdReceived }
+
+    var debugActiveStreamingSession: StreamingTranscriptionSession? { self.activeStreamingSession }
+
+    var debugGrokRetryStore: GrokSTTRetryStore { self.grokRetryStore }
+
+    private func startBypassingHardwareCapture(
+        forDictionaryTraining: Bool,
+        onCaptureStarted: (@MainActor () -> Void)?
+    ) async -> AudioCaptureStartOutcome {
+        guard self.isRunning == false, self.isStarting == false, self.isTerminating == false else {
+            return self.isRunning || self.isStarting ? .alreadyActive : .failed
+        }
+        self.isStarting = true
+        defer { self.finishAudioCaptureStart() }
+        self.finalText.removeAll()
+        self.audioBuffer.clear(keepingCapacity: true)
+        self.partialTranscription.removeAll()
+        self.previousFullTranscription.removeAll()
+        self.lastBoostHitTerm = nil
+        self.lastProcessedSampleCount = 0
+        self.isProcessingChunk = false
+        self.skipNextChunk = false
+        self.sessionTransportError = nil
+        self.createdReceived = false
+        self.isDictionaryTrainingCaptureActive = forDictionaryTraining
+        self.isRunning = true
+        onCaptureStarted?()
+        if forDictionaryTraining {
+            DebugLogger.shared.debug("⏸️ Skipping session for dictionary training sample", source: "ASRService")
+        } else if self.transcriptionProvider is StreamingTranscriptionProviding {
+            self.startSessionTranscription()
+        } else if SettingsStore.shared.selectedSpeechModel.supportsStreaming {
+            self.startStreamingTranscription()
+        }
+        return .started
+    }
+    #endif
+
     // MARK: - Timer-based Streaming Transcription (No VAD)
 
     private func startStreamingTranscription() {
+        assert(
+            !(self.transcriptionProvider is StreamingTranscriptionProviding),
+            "runStreamingLoop must never run for a streaming session provider"
+        )
         self.streamingTask?.cancel()
         guard self.isAsrReady else { return }
 
@@ -4678,6 +5145,10 @@ final class ASRService: ObservableObject {
 
     @MainActor
     private func runStreamingLoop() async {
+        assert(
+            !(self.transcriptionProvider is StreamingTranscriptionProviding),
+            "runStreamingLoop must never run for a streaming session provider"
+        )
         DebugLogger.shared.debug("🔄 runStreamingLoop() - ENTERED", source: "ASRService")
         var loopCount = 0
         var lastBufferCount = 0
