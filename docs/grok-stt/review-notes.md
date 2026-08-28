@@ -103,3 +103,15 @@ No leftover minors. The three blocking/major items (unsanitized `.server` associ
 ## PR2 round 5
 
 - **No test locks the GrokSTTCredential reflection redaction** (`Sources/Fluid/Services/GrokSTT/GrokSTTCredential.swift`). GrokSTTCredential stores the raw bearer. Its CustomDebugStringConvertible conformance (Sources/Fluid/Services/GrokSTT/GrokSTTCredential.swift:48-52) is the only thing preventing String(reflecting:)/dump() from printing that bearer, and it has no test. U19's redaction assertions (GrokSTTCredentialResolverTests.swift:246-330) exercise GrokSTTError and GrokSTTSanitizedMessage only. If someone later removes the conformance — as happened to the enum conformances in round 4 — the default reflection dump would print the bearer and every test would still pass. Suggested: Add one assertion alongside the existing U19 cases: build a GrokSTTCredential(bearer: "xai-secret-...", source: .grokCLISession, ...) and assert that String(describing:), String(reflecting:) and debugDescription contain neither the bearer nor its fingerprint.
+
+## PR3a review round 1
+
+### Codex
+
+No leftover minors. Blocking/major items (pre-`audio.done` assembler insert, REST/Retry provider pinning, retry-store leak into local recordings, Retry routing, session generation isolation, stop-time PCM framing, test-only fake session) were filed as blocking/major and fixed in this round.
+
+### Claude
+
+- **created/handoff race can silently drop the whole utterance in PR3b** (`Sources/Fluid/Services/ASRService.swift`). `finishSessionTranscriptionBody` snapshots `createdReceived` before `finish()`, but the sibling start task used to set the session to `streaming` inside `session.start()` before `gate.markCreated()`. If `start()` lands in that window, stop takes the `!created` branch and calls `handoffUnsentPCM` on a session already in `streaming`, where the protocol declares handoff illegal. Round-1 now marks created only after the generation/session identity check, which narrows the window; a real WebSocket session that rejects handoff in `streaming` could still send `audio.done` with zero audio if created flips between the snapshot and the handoff. Suggested leftover: mark created before the session leaves `waitCreated`, or accept `handoffUnsentPCM` in `streaming` when nothing has been appended yet, and add a test that flips created between the snapshot read and the handoff.
+
+- **U23/U29/U30 still exercise `startBypassingHardwareCapture`, not a live mic start** (`Sources/Fluid/Services/ASRService.swift`). Round-1 shrunk the bypass so it calls the same `startTranscriptionAfterCaptureBegan` helper as production `start()`, but the hardware-capture prologue remains a DEBUG replica. A regression in the real `start()` mic/permission/`isRunning` path before that helper would not fail these tests. Suggested: seam the audio-capture dependency instead of a second start method.
