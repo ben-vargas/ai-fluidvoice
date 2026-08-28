@@ -41,7 +41,6 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
     private var connectStartedAt: Date?
     private var audioDoneSent = false
     private var appendedFrameCount = 0
-    private var credential: GrokSTTCredential?
     private var didRetryUnauthorized = false
     private var createdWaiters: [CheckedContinuation<Void, Error>] = []
     private var finishWaiters: [CheckedContinuation<String, Error>] = []
@@ -278,7 +277,6 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
                 message: "CLI WebSocket is disabled. Use an API key for dictation."
             )
         }
-        self.lock.withLock { self.credential = credential }
 
         while true {
             try Task.checkCancellation()
@@ -311,7 +309,6 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
                             rejectedBearerFingerprint: credential.bearerFingerprint
                         )
                     }
-                    self.lock.withLock { self.credential = credential }
                     self.closeConnection()
                     continue
                 }

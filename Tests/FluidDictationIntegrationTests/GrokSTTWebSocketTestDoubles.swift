@@ -1,5 +1,6 @@
 @testable import FluidVoice_Debug
 import Foundation
+import Network
 import XCTest
 
 final class FakeGrokSTTWebSocketConnection: GrokSTTWebSocketConnection, @unchecked Sendable {
@@ -280,4 +281,66 @@ func grokSTTAssertEventually(
 ) async {
     let ok = await grokSTTWaitUntil(timeout: timeout, predicate: predicate)
     XCTAssertTrue(ok, message, file: file, line: line)
+}
+
+/// Loopback HTTP responder for failed WebSocket-upgrade tests. Not a general server.
+final class LoopbackHTTPStatusServer: @unchecked Sendable {
+    enum StartupError: Error {
+        case notReady
+    }
+
+    private let listener: NWListener
+    private let queue = DispatchQueue(label: "grok.stt.loopback.http")
+    let port: UInt16
+
+    init(statusCode: Int) throws {
+        let listener = try NWListener(using: .tcp, on: .any)
+        self.listener = listener
+        let ready = DispatchSemaphore(value: 0)
+        var failed = false
+        listener.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                ready.signal()
+            case .failed:
+                failed = true
+                ready.signal()
+            default:
+                break
+            }
+        }
+        listener.newConnectionHandler = { connection in
+            connection.start(queue: DispatchQueue.global())
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 16_384) { _, _, _, _ in
+                let reason = statusCode == 401 ? "Unauthorized" : "Error"
+                let response = "HTTP/1.1 \(statusCode) \(reason)\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                connection.send(
+                    content: Data(response.utf8),
+                    contentContext: .finalMessage,
+                    isComplete: true,
+                    completion: .contentProcessed { _ in
+                        connection.cancel()
+                    }
+                )
+            }
+        }
+        listener.start(queue: self.queue)
+        if ready.wait(timeout: .now() + 2) == .timedOut || failed {
+            listener.cancel()
+            throw StartupError.notReady
+        }
+        guard let port = listener.port?.rawValue else {
+            listener.cancel()
+            throw StartupError.notReady
+        }
+        self.port = port
+    }
+
+    func stop() {
+        self.listener.cancel()
+    }
+
+    deinit {
+        self.listener.cancel()
+    }
 }

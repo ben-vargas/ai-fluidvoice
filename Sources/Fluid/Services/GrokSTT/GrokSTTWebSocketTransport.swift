@@ -67,14 +67,26 @@ nonisolated enum GrokSTTTransportErrorMapper {
 final nonisolated class GrokSTTURLSessionWebSocketTransport: NSObject, GrokSTTWebSocketTransporting, @unchecked Sendable {
     static let connectTimeout: TimeInterval = 20
 
+    #if DEBUG
+    private(set) var debugLastConnection: GrokSTTURLSessionWebSocketConnection?
+    #endif
+
     func connect(request: URLRequest) async throws -> any GrokSTTWebSocketConnection {
         let connection = GrokSTTURLSessionWebSocketConnection()
-        try await withTaskCancellationHandler {
-            try await connection.open(request: request)
-        } onCancel: {
+        #if DEBUG
+        self.debugLastConnection = connection
+        #endif
+        do {
+            try await withTaskCancellationHandler {
+                try await connection.open(request: request)
+            } onCancel: {
+                connection.close()
+            }
+            return connection
+        } catch {
             connection.close()
+            throw error
         }
-        return connection
     }
 }
 
@@ -162,6 +174,16 @@ final nonisolated class GrokSTTURLSessionWebSocketConnection: NSObject, URLSessi
         task?.cancel(with: .goingAway, reason: nil)
         session?.invalidateAndCancel()
     }
+
+    #if DEBUG
+    var debugIsClosed: Bool {
+        self.lock.withLock { self.closed }
+    }
+
+    var debugRetainsURLSession: Bool {
+        self.lock.withLock { self.urlSession != nil }
+    }
+    #endif
 
     func urlSession(
         _ session: URLSession,

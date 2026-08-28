@@ -485,6 +485,38 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         XCTAssertEqual(session.currentState, .cancelled)
     }
 
+    func testFailedOpenCleansUpOnUnauthorized() async throws {
+        let server = try LoopbackHTTPStatusServer(statusCode: 401)
+        defer { server.stop() }
+        let transport = GrokSTTURLSessionWebSocketTransport()
+        var request = URLRequest(url: URL(string: "ws://127.0.0.1:\(server.port)/v1/stt")!)
+        request.setValue("Bearer xai-bad-key", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 3
+        do {
+            _ = try await transport.connect(request: request)
+            XCTFail("401 upgrade must fail")
+        } catch {
+            XCTAssertEqual(error as? GrokSTTError, .unauthorized)
+        }
+        XCTAssertEqual(transport.debugLastConnection?.debugIsClosed, true)
+        XCTAssertEqual(transport.debugLastConnection?.debugRetainsURLSession, false)
+    }
+
+    func testFailedOpenCleansUpOnOffline() async {
+        let transport = GrokSTTURLSessionWebSocketTransport()
+        var request = URLRequest(url: URL(string: "ws://127.0.0.1:1/v1/stt")!)
+        request.setValue("Bearer xai-test-key", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 2
+        do {
+            _ = try await transport.connect(request: request)
+            XCTFail("offline upgrade must fail")
+        } catch {
+            XCTAssertEqual(error as? GrokSTTError, .offline)
+        }
+        XCTAssertEqual(transport.debugLastConnection?.debugIsClosed, true)
+        XCTAssertEqual(transport.debugLastConnection?.debugRetainsURLSession, false)
+    }
+
     func testPartialDoneTimeoutSucceedsAndCloses() async throws {
         let transport = FakeGrokSTTWebSocketTransport()
         let connection = FakeGrokSTTWebSocketConnection()
