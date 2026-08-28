@@ -63,10 +63,6 @@ final nonisolated class GrokSTTCredentialResolver: GrokSTTCredentialResolving, @
         }
     }
 
-    var selectedAuthMode: GrokSTTAuthMode {
-        self.dependencies.authMode()
-    }
-
     func resolveCredential() async throws -> GrokSTTCredential {
         switch self.dependencies.authMode() {
         case .apiKey:

@@ -5,10 +5,13 @@ nonisolated protocol GrokSTTAPIKeyStoring: Sendable {
     func loadAPIKey() throws -> String?
     func storeAPIKey(_ key: String) throws
     func deleteAPIKey() throws
+    var hasAPIKey: Bool { get }
 }
 
 extension GrokSTTAPIKeyStoring {
-    var hasAPIKey: Bool {
+    /// Off-MainActor: `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor` would otherwise
+    /// isolate this protocol-extension helper and leak into `isSourceConfigured`.
+    nonisolated var hasAPIKey: Bool {
         guard let key = try? self.loadAPIKey() else { return false }
         return !key.isEmpty
     }
