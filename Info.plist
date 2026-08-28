@@ -23,7 +23,7 @@
 	<key>NSAccessibilityUsageDescription</key>
 	<string>FluidVoice needs Accessibility permission to listen for global hotkeys and type text into other apps when you stop recording.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>FluidVoice needs microphone access to record your voice for speech-to-text transcription. Your audio is processed locally and never sent to external servers.</string>
+	<string>FluidVoice needs the microphone to transcribe your speech. By default, audio is processed on your Mac. If you choose a cloud speech engine (for example Grok / xAI), audio is sent to that provider.</string>
 	<key>LSUIElement</key>
 	<false/>
 	<key>NSAppleEventsUsageDescription</key>
@@ -33,6 +33,6 @@
 	<key>POSTHOG_HOST</key>
 	<string>https://eu.i.posthog.com</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>FluidVoice uses on-device speech recognition to transcribe your voice commands and text quickly and privately.</string>
+	<string>FluidVoice transcribes your voice. On-device engines keep audio on your Mac. Cloud engines you opt into send audio to the selected provider.</string>
 </dict>
 </plist>

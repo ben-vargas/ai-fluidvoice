@@ -50,7 +50,8 @@ struct CustomDictionaryView: View {
     @State private var isTrainedReplacementButtonHovered = false
     @State private var isTrainedReplacementGlowExpanded = false
     @State private var replacementConfirmation: ReplacementConfirmation?
-    @State private var composerMode: DictionaryComposerMode = .train
+    @State private var composerMode: DictionaryComposerMode =
+        SettingsStore.shared.selectedSpeechModel.supportsPronunciationMatching ? .train : .manual
     @State private var manualTriggerDraft = ""
     @State private var manualReplacement = ""
     @State private var isYourDictionaryPresented = false
@@ -308,6 +309,7 @@ struct CustomDictionaryView: View {
             if !SettingsStore.shared.selectedSpeechModel.supportsPronunciationMatching {
                 self.pronunciationMatchingEnabled = false
                 SettingsStore.shared.pronunciationMatchingEnabled = false
+                self.composerMode = .manual
             }
             self.punctuationAutoConvertEnabled = SettingsStore.shared.autoConvertPunctuationEnabled
             self.formattingActionRules = SettingsStore.shared.spokenFormattingActionRules
@@ -470,7 +472,7 @@ struct CustomDictionaryView: View {
 
     private var dictionaryComposerModeSegmented: some View {
         HStack(spacing: 2) {
-            ForEach(DictionaryComposerMode.allCases) { mode in
+            ForEach(self.availableComposerModes) { mode in
                 DictionaryComposerModeTab(
                     mode: mode,
                     isSelected: self.composerMode == mode,
@@ -502,7 +504,9 @@ struct CustomDictionaryView: View {
 
             self.voiceMatchingSettingsRow
 
-            self.trainingRecorderPanel
+            if SettingsStore.shared.selectedSpeechModel.supportsPronunciationMatching {
+                self.trainingRecorderPanel
+            }
 
             self.trainingFinalOutputPanel
 
@@ -1778,8 +1782,16 @@ struct CustomDictionaryView: View {
         )
     }
 
+    private var availableComposerModes: [DictionaryComposerMode] {
+        if SettingsStore.shared.selectedSpeechModel.supportsPronunciationMatching {
+            return DictionaryComposerMode.allCases
+        }
+        return [.manual]
+    }
+
     private func selectComposerMode(_ mode: DictionaryComposerMode) {
         guard !self.isTrainingRecording, !self.isTrainingProcessing else { return }
+        guard self.availableComposerModes.contains(mode) else { return }
         self.composerMode = mode
     }
 
@@ -2776,7 +2788,7 @@ private enum DictionaryTrainingCopy {
     }
 }
 
-private enum DictionaryComposerMode: CaseIterable, Identifiable {
+private enum DictionaryComposerMode: CaseIterable, Identifiable, Equatable {
     case train
     case manual
 

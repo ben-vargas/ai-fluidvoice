@@ -95,6 +95,8 @@ final class VoiceEngineSettingsViewModel: ObservableObject {
             models = models.filter { $0.provider == .cohere }
         case .openai:
             models = models.filter { $0.provider == .openai }
+        case .xai:
+            models = models.filter { $0.provider == .xai }
         }
 
         if self.englishOnlyFilter {
@@ -122,7 +124,7 @@ final class VoiceEngineSettingsViewModel: ObservableObject {
     }
 
     func activateSpeechModel(_ model: SettingsStore.SpeechModel) {
-        guard !self.areSpeechModelActionsBlocked else { return }
+        guard !self.areSpeechModelActionsBlocked, model.canActivateVoiceEngine else { return }
         withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
             self.settings.selectedSpeechModel = model
             self.previewSpeechModel = model
@@ -226,6 +228,8 @@ final class VoiceEngineSettingsViewModel: ObservableObject {
             return "Nemotron 3.5 Multilingual is slower but more accurate. Supports around 40 languages with auto or manual language selection. Best on Apple Silicon with 8GB+ RAM."
         case .nemotronStreaming, .nemotronStreaming320:
             return "Nemotron Speech 3.5 Streaming Capable uses NVIDIA's streaming CoreML pipeline. Supports around 40 languages with auto or manual language selection."
+        case .grokSTT:
+            return "Grok Speech (xAI) sends your microphone audio to xAI for cloud transcription. This is opt-in and is not local-first. xAI’s docs tell developers to proxy WebSockets and not put keys in clients; FluidVoice presents your key or your CLI token from this Mac app."
         default:
             return "Whisper models support 99 languages and work on any Mac."
         }

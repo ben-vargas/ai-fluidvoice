@@ -601,6 +601,10 @@ private struct AutomaticDictionaryCorrectionOverlayView: View {
 
     private var accent: Color { self.settings.accentColor }
 
+    private var supportsPronunciationTraining: Bool {
+        self.settings.selectedSpeechModel.supportsPronunciationMatching
+    }
+
     var body: some View {
         Group {
             switch self.session.screen {
@@ -648,13 +652,15 @@ private struct AutomaticDictionaryCorrectionOverlayView: View {
                 .lineLimit(1)
 
             HStack(spacing: 8) {
-                CorrectionOverlayActionButton(
-                    title: "Train by Voice",
-                    systemImage: "mic.fill",
-                    style: .secondary,
-                    accent: self.accent,
-                    action: self.session.beginTraining
-                )
+                if self.supportsPronunciationTraining {
+                    CorrectionOverlayActionButton(
+                        title: "Train by Voice",
+                        systemImage: "mic.fill",
+                        style: .secondary,
+                        accent: self.accent,
+                        action: self.session.beginTraining
+                    )
+                }
 
                 CorrectionOverlayActionButton(
                     title: "Add This Correction",
@@ -674,7 +680,14 @@ private struct AutomaticDictionaryCorrectionOverlayView: View {
 
             self.correctionPair
 
+            if !self.supportsPronunciationTraining {
+                Text("Voice training is unavailable for this speech engine. Add the correction as a replacement instead.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.58))
+            }
+
             VStack(alignment: .leading, spacing: 9) {
+                if self.supportsPronunciationTraining {
                 Text("Teach FluidVoice your pronunciation")
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.94))
@@ -716,6 +729,7 @@ private struct AutomaticDictionaryCorrectionOverlayView: View {
                         accent: self.accent,
                         action: self.session.toggleCapture
                     )
+                }
                 }
             }
             .padding(10)

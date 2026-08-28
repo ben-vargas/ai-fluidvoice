@@ -191,7 +191,7 @@ extension VoiceEngineSettingsView {
                         Text(model.cardDescription)
                             .font(self.theme.typography.bodySmall)
                             .foregroundStyle(self.voiceEngineSecondaryText)
-                            .lineLimit(2)
+                            .lineLimit(model.isCloudEngine ? 5 : 2)
                     }
 
                     HStack(spacing: 8) {
@@ -223,6 +223,17 @@ extension VoiceEngineSettingsView {
                             .font(self.theme.typography.bodySmall)
                             .foregroundStyle(self.voiceEngineSecondaryText)
                             .lineLimit(2)
+                    }
+
+                    if model.isCloudEngine {
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: "icloud.fill")
+                                .font(self.theme.typography.bodySmall)
+                                .foregroundStyle(.orange)
+                            Text("Audio is sent to xAI. This engine is opt-in and is not local-first.")
+                                .font(self.theme.typography.bodySmall)
+                                .foregroundStyle(.orange)
+                        }
                     }
 
                     // Memory warning for large models
@@ -456,10 +467,10 @@ extension VoiceEngineSettingsView {
                         .tint(Color.fluidGreen)
                         .fontWeight(.semibold)
                         .shadow(color: Color.fluidGreen.opacity(0.35), radius: 4, x: 0, y: 1)
-                        .disabled(self.viewModel.areSpeechModelActionsBlocked)
+                        .disabled(self.viewModel.areSpeechModelActionsBlocked || !model.canActivateVoiceEngine)
                     }
 
-                    if !model.usesAppleLogo {
+                    if model.showsVoiceEngineDeleteAction {
                         if isSelected {
                             Button {
                                 self.viewModel.deleteSpeechModel(model)
@@ -550,6 +561,8 @@ extension VoiceEngineSettingsView {
     private func speechModelLanguagePicker(for model: SettingsStore.SpeechModel) -> some View {
         if model.isWhisperModel {
             self.whisperLanguagePickerButton
+        } else if model == .grokSTT {
+            self.grokSTTLanguagePickerButton
         } else if model == .cohereTranscribeSixBit {
             Menu {
                 ForEach(SettingsStore.CohereLanguage.allCases) { language in
@@ -572,6 +585,43 @@ extension VoiceEngineSettingsView {
         } else if model == .nemotronOffline || model == .nemotronStreaming || model == .nemotronStreaming320 {
             self.nemotronLanguagePickerButton
         }
+    }
+
+    private var grokSTTLanguagePickerButton: some View {
+        Menu {
+            Button {
+                self.settings.selectedGrokSTTLanguageCode = nil
+            } label: {
+                HStack {
+                    Text("Automatic")
+                    if self.settings.selectedGrokSTTLanguageCode == nil {
+                        Image(systemName: "checkmark")
+                    }
+                }
+            }
+            ForEach(VoiceEngineLanguageCatalog.grokSTTLanguageCodes, id: \.self) { languageCode in
+                Button {
+                    self.settings.selectedGrokSTTLanguageCode = languageCode
+                } label: {
+                    HStack {
+                        Text(VoiceEngineLanguageCatalog.grokSTTLanguageDisplayName(forCode: languageCode))
+                        if languageCode == self.settings.selectedGrokSTTLanguageCode {
+                            Image(systemName: "checkmark")
+                        }
+                    }
+                }
+            }
+        } label: {
+            self.languageChipLabel(self.selectedGrokSTTLanguageName)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var selectedGrokSTTLanguageName: String {
+        guard let languageCode = self.settings.selectedGrokSTTLanguageCode else {
+            return "Automatic"
+        }
+        return VoiceEngineLanguageCatalog.grokSTTLanguageDisplayName(forCode: languageCode)
     }
 
     private var whisperLanguagePickerButton: some View {
@@ -891,7 +941,7 @@ extension VoiceEngineSettingsView {
         let brand = model.brandName.lowercased()
 
         // Both NVIDIA and OpenAI use white/light gray bg (transparent logos)
-        if brand.contains("nvidia") || brand.contains("openai") || brand.contains("whisper") {
+        if brand.contains("nvidia") || brand.contains("openai") || brand.contains("whisper") || brand.contains("xai") {
             return Color(red: 0.97, green: 0.97, blue: 0.97)
         }
         if brand.contains("apple") || model.usesAppleLogo {
@@ -911,6 +961,9 @@ extension VoiceEngineSettingsView {
         }
         if brand.contains("openai") || brand.contains("whisper") {
             return "Provider_OpenAI"
+        }
+        if brand.contains("xai") {
+            return "Provider_xAI"
         }
         return nil
     }

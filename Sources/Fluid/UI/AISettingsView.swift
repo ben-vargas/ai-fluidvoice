@@ -73,6 +73,7 @@ enum SpeechProviderFilter: String, CaseIterable, Identifiable {
     case apple = "Apple"
     case cohere = "Cohere"
     case openai = "OpenAI"
+    case xai = "xAI"
 
     var id: String { self.rawValue }
 }
