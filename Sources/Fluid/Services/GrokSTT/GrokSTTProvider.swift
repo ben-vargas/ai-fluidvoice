@@ -14,11 +14,6 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     private let cliSocketEnabled: Bool
     private let apiKeySocketEnabled: Bool
     private let lock = NSLock()
-    /// Meetings / LocalAPI PCM REST stays closed until PR4's consent notices land.
-    private static let restNotYetAvailable = GrokSTTError.server(
-        status: 501,
-        message: "Grok REST speech-to-text is not available yet."
-    )
 
     #if DEBUG
     private var sessionFactory: ((StreamingSTTSessionConfiguration) throws -> StreamingTranscriptionSession)?
@@ -88,8 +83,7 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     }
 
     nonisolated func transcribe(_ samples: [Float]) async throws -> ASRTranscriptionResult {
-        _ = samples
-        throw Self.restNotYetAvailable
+        try await self.transcribePCM(samples, timeout: Self.meetingTimeout(forSampleCount: samples.count))
     }
 
     nonisolated func transcribeStreaming(_ samples: [Float]) async throws -> ASRTranscriptionResult {
@@ -98,8 +92,7 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     }
 
     nonisolated func transcribeFinal(_ samples: [Float]) async throws -> ASRTranscriptionResult {
-        _ = samples
-        throw Self.restNotYetAvailable
+        try await self.transcribePCM(samples, timeout: Self.meetingTimeout(forSampleCount: samples.count))
     }
 
     nonisolated func transcribeFinal(
@@ -133,7 +126,12 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
                 return try await restFileHandler(fileURL)
             }
             #endif
-            throw Self.restNotYetAvailable
+            let (languageCode, keyterms) = await Self.restLanguageAndKeyterms()
+            return try await self.restClient.transcribeFile(
+                at: fileURL,
+                languageCode: languageCode,
+                keyterms: keyterms
+            )
         }.value
     }
 
@@ -168,5 +166,40 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
             return nil
         }
         return trimmed == "tl" ? "fil" : trimmed
+    }
+
+    private nonisolated func transcribePCM(
+        _ samples: [Float],
+        timeout: TimeInterval
+    ) async throws -> ASRTranscriptionResult {
+        try await Task.detached { [samples, timeout] in
+            #if DEBUG
+            if let restFinalHandler = self.lock.withLock({ self.restFinalHandler }) {
+                return try await restFinalHandler(samples, nil)
+            }
+            #endif
+            let (languageCode, keyterms) = await Self.restLanguageAndKeyterms()
+            return try await self.restClient.transcribePCM(
+                samples,
+                languageCode: languageCode,
+                keyterms: keyterms,
+                timeout: timeout
+            )
+        }.value
+    }
+
+    private static func meetingTimeout(forSampleCount count: Int) -> TimeInterval {
+        let duration = Double(count) / Double(GrokSTTAudioConverter.sampleRate)
+        return GrokSTTRESTClient.meetingTimeout(durationSeconds: duration)
+    }
+
+    /// Brief MainActor snapshot of language/keyterms. REST itself stays off-main.
+    private static func restLanguageAndKeyterms() async -> (String?, [String]) {
+        await MainActor.run {
+            (
+                Self.wireLanguageCode(SettingsStore.shared.selectedGrokSTTLanguageCode),
+                GrokSTTKeytermBuilder.terms()
+            )
+        }
     }
 }
