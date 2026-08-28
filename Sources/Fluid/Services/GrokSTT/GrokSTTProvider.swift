@@ -99,12 +99,6 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
         throw Self.restNotYetAvailable
     }
 
-    nonisolated func transcribeFinal(_ samples: [Float], languageCode: String?) async throws -> ASRTranscriptionResult {
-        _ = samples
-        _ = languageCode
-        throw Self.restNotYetAvailable
-    }
-
     nonisolated func transcribeFinal(
         _ samples: [Float],
         languageCode: String?,

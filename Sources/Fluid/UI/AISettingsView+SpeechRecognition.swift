@@ -787,9 +787,6 @@ extension VoiceEngineSettingsView {
         {
             return "CLI WebSocket unavailable — use an API key for dictation"
         }
-        if SettingsStore.SpeechModel.grokSTTCredentialSourceConfigured {
-            return "Not activatable yet"
-        }
         return "Needs credentials"
     }
 
