@@ -251,6 +251,17 @@ final class GrokSTTCLIAuthStoreTests: XCTestCase {
         XCTAssertEqual(try overrideLocator.locate().path, "/opt/custom/bin/grok")
     }
 
+    func testL13GUILessLocatorFindsHomeGrokBinWithoutPATH() throws {
+        let files = MemoryGrokSTTFileSystem()
+        files.executables.insert("/Users/test/.grok/bin/grok")
+        let locator = GrokCLIBinaryLocator(
+            fileSystem: files,
+            homeDirectory: { self.home },
+            userOverride: { nil }
+        )
+        XCTAssertEqual(try locator.locate().path, "/Users/test/.grok/bin/grok")
+    }
+
     func testBinaryLocatorSearchesKnownPaths() throws {
         let files = MemoryGrokSTTFileSystem()
         files.executables.insert("/usr/local/bin/grok")

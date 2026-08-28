@@ -304,6 +304,10 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         XCTAssertTrue(header.hasPrefix("Bearer "))
         XCTAssertGreaterThan(header.count, 8)
         XCTAssertEqual(request.timeoutInterval, 20)
+        let dump = GrokSTTLog.describeRequest(request)
+        XCTAssertFalse(dump.contains("super-secret-token-value"))
+        XCTAssertTrue(dump.localizedCaseInsensitiveContains("redacted"))
+        XCTAssertTrue(dump.contains("(body omitted)"))
     }
 
     func testStartAndFinishRunOffMainActor() async throws {

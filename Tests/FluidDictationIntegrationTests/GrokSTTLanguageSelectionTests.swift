@@ -27,11 +27,32 @@ final class GrokSTTLanguageSelectionTests: XCTestCase {
 
     func testGrokPickerContainsTwentyFiveCodesIncludingFilNotTl() {
         let codes = VoiceEngineLanguageCatalog.grokSTTLanguageCodes
+        XCTAssertEqual(
+            codes,
+            [
+                "ar", "cs", "da", "nl", "en", "fil", "fr", "de", "hi",
+                "id", "it", "ja", "ko", "mk", "ms", "fa", "pl", "pt",
+                "ro", "ru", "es", "sv", "th", "tr", "vi",
+            ]
+        )
         XCTAssertEqual(codes.count, 25)
         XCTAssertEqual(Set(codes).count, 25)
         XCTAssertTrue(codes.contains("fil"))
         XCTAssertFalse(codes.contains("tl"))
+        XCTAssertFalse(codes.contains("zh"))
         XCTAssertEqual(VoiceEngineLanguageCatalog.grokSTTLanguages.count, 25)
+    }
+
+    func testRESTSendsFilAndNeverTl() async throws {
+        let http = FakeGrokSTTHTTPClient()
+        http.enqueue(status: 200, json: ["text": "ok"])
+        let client = GrokSTTRESTClient(resolver: RecordingGrokSTTResolver(), http: http)
+        _ = try await client.transcribePCM([0.1, 0.2], languageCode: "fil")
+        let body = String(decoding: http.requests[0].httpBody ?? Data(), as: UTF8.self)
+        XCTAssertTrue(body.contains("name=\"language\""))
+        XCTAssertTrue(body.contains("fil"))
+        XCTAssertFalse(body.contains("\r\n\r\ntl\r\n"))
+        XCTAssertFalse(body.contains("name=\"language\"\r\n\r\ntl"))
     }
 
     func testOnboardingRouteCandidatesDoNotIncludeGrok() {

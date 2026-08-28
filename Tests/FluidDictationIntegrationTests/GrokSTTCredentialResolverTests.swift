@@ -325,6 +325,28 @@ final class GrokSTTCredentialResolverTests: XCTestCase {
         }
     }
 
+    func testCredentialReflectionDoesNotLeakBearer() {
+        let bearer = "xai-secret-bearer-value-12345678901234567890"
+        let credential = GrokSTTCredential(
+            bearer: bearer,
+            source: .grokCLISession,
+            expiresAt: Date(timeIntervalSince1970: 1_700_000_000),
+            accountLabel: "me@example.com"
+        )
+        let surfaces = [
+            String(describing: credential),
+            String(reflecting: credential),
+            credential.description,
+            credential.debugDescription,
+        ]
+        for text in surfaces {
+            XCTAssertFalse(text.contains(bearer), text)
+            XCTAssertFalse(text.contains(credential.bearerFingerprint), text)
+            XCTAssertFalse(text.localizedCaseInsensitiveContains("Bearer"), text)
+            XCTAssertTrue(text.contains("grokCLISession"), text)
+        }
+    }
+
     func testForbiddenHasNoRetryHelper() {
         XCTAssertEqual(GrokSTTError.fromHTTPStatus(403), .forbidden)
         XCTAssertEqual(GrokSTTError.fromHTTPStatus(401), .unauthorized)

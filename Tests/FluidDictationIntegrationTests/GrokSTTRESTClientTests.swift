@@ -76,6 +76,7 @@ final class GrokSTTRESTClientTests: XCTestCase {
         XCTAssertEqual(resolver.unauthorizedCallCount, 0)
     }
 
+    /// L7: 403 never retries (CLI alternate is not consulted).
     func test403DoesNotRetry() async {
         let http = FakeGrokSTTHTTPClient()
         http.enqueue(status: 403, json: ["error": "forbidden"])
