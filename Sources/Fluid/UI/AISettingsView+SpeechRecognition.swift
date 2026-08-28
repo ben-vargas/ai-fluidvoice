@@ -772,10 +772,9 @@ extension VoiceEngineSettingsView {
         case .nemotronStreaming, .nemotronStreaming320:
             return "Nemotron Speech 3.5 - Streaming Capable"
         case .grokSTT:
-            if !SettingsStore.SpeechModel.grokSTTCredentialSourceConfigured {
-                return "Grok Speech (xAI) · Needs credentials"
-            }
-            return "Grok Speech (xAI) · Not active"
+            return GrokSTTSettingsCopy.engineSubtitle(
+                needsCredentials: !SettingsStore.SpeechModel.grokSTTCredentialSourceConfigured
+            )
         default:
             return model.displayName
         }
@@ -818,10 +817,10 @@ extension VoiceEngineSettingsView {
                     .font(self.theme.typography.bodySmall)
                     .foregroundStyle(self.voiceEngineSecondaryText)
                 }
-                Text("API key (documented): billed at xAI’s published rates (streaming ~$0.20/hour, REST ~$0.10/hour as of 2026-08-27).")
+                Text(GrokSTTSettingsCopy.apiKeyBilling)
                     .font(self.theme.typography.bodySmall)
                     .foregroundStyle(self.voiceEngineSecondaryText)
-                Text("This key is used only for speech-to-text. It is not the xAI key under AI Enhancement.")
+                Text(GrokSTTSettingsCopy.sttKeyIsolation)
                     .font(self.theme.typography.bodySmall)
                     .foregroundStyle(self.voiceEngineSecondaryText)
 
@@ -852,11 +851,7 @@ extension VoiceEngineSettingsView {
                     .font(self.theme.typography.bodySmall)
                     .foregroundStyle(self.voiceEngineSecondaryText)
                 }
-                Text(
-                    "Grok CLI session (experimental, undocumented): uses a read-only ~/.grok/auth.json. " +
-                        "xAI does not publish that this token is valid for STT; it may stop working. " +
-                        "Billing/quota for this path is unknown. FluidVoice never writes that file."
-                )
+                Text(GrokSTTSettingsCopy.cliSessionExperimental)
                 .font(self.theme.typography.bodySmall)
                 .foregroundStyle(self.voiceEngineSecondaryText)
                 Text(self.grokCLISessionStatusText)
@@ -884,7 +879,7 @@ extension VoiceEngineSettingsView {
                 }
             }
 
-            Text("xAI’s docs tell developers to proxy WebSockets and not put keys in clients. FluidVoice presents your key or your CLI token from this Mac app. Do not paste a team-shared key.")
+            Text(GrokSTTSettingsCopy.clientKeyDeviation)
                 .font(self.theme.typography.bodySmall)
                 .foregroundStyle(self.voiceEngineSecondaryText)
 

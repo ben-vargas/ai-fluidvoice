@@ -128,7 +128,7 @@ https://github.com/user-attachments/assets/c57ef6d5-f0a1-4a3f-a121-637533442c24
 | Cohere Transcribe | High-accuracy multilingual dictation | [14 languages](#cohere-transcribe-languages) | ~1.4 GB | Apple Silicon |
 | Apple Speech | Zero-download native macOS speech | [System languages](#apple-speech-languages) | Built-in | Apple Silicon + Intel |
 | Whisper Tiny / Base / Small / Medium / Large | Broad compatibility, including Intel Macs | [99 languages](#whisper-language-support) | ~75 MB to ~2.9 GB | Apple Silicon + Intel |
-| Grok Speech (xAI) | Opt-in cloud dictation (pick this engine in Voice Engine settings and supply a credential) | 25 languages (select or Auto) | Cloud — no download | Apple Silicon + Intel |
+| Grok Speech (xAI) | Opt-in cloud dictation (experimental — pick this engine in Voice Engine settings and supply a credential) | 25 languages (select or Auto) | Cloud — no download | Apple Silicon + Intel |
 
 ### Parakeet TDT v3 Languages
 

@@ -231,9 +231,7 @@ final class VoiceEngineSettingsViewModel: ObservableObject {
         case .nemotronStreaming, .nemotronStreaming320:
             return "Nemotron Speech 3.5 Streaming Capable uses NVIDIA's streaming CoreML pipeline. Supports around 40 languages with auto or manual language selection."
         case .grokSTT:
-            return "Grok Speech (xAI) sends your microphone audio to xAI for cloud transcription. " +
-                "This is opt-in and is not local-first. xAI’s docs tell developers to proxy WebSockets " +
-                "and not put keys in clients; FluidVoice presents your key or your CLI token from this Mac app."
+            return GrokSTTSettingsCopy.advancedDescription
         default:
             return "Whisper models support 99 languages and work on any Mac."
         }

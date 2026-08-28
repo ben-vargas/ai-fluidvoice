@@ -4930,7 +4930,7 @@ final class SettingsStore: ObservableObject {
             case .whisperLarge:
                 return "Best possible accuracy. Large download and memory usage."
             case .grokSTT:
-                return "Cloud. Your microphone audio is sent to xAI for transcription (wss://api.x.ai/v1/stt). This is opt-in and is not local-first."
+                return GrokSTTSettingsCopy.cardDescription
             }
         }
 
@@ -5076,7 +5076,7 @@ final class SettingsStore: ObservableObject {
             case .cohereTranscribeSixBit: return "New"
             case .nemotronOffline, .nemotronStreaming, .nemotronStreaming320: return "New + Beta"
             case .appleSpeechAnalyzer: return "New"
-            case .grokSTT: return "Cloud · Experimental"
+            case .grokSTT: return GrokSTTSettingsCopy.experimentalBadge
             default: return nil
             }
         }
