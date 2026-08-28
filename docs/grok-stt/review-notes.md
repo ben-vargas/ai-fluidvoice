@@ -385,3 +385,23 @@ No leftover minors. The audio.done queue-time metric was filed as minor here and
 - **`GrokSTTLog.redact` inherits a 180-character hard truncation** (`Sources/Fluid/Services/GrokSTT/GrokSTTLog.swift`). `redact` delegates to `GrokSTTError.sanitizedMessage`, which caps at 180 characters (designed for untrusted server payloads). Applied to `describeRequest` the dump can lose the masked `Authorization` line and `(body omitted)` once a few `keyterm` query items push the URL past 180. Truncation only removes text (not a leak). Suggested: redact per line inside `describeRequest`, or give `GrokSTTLog` a redaction entry point without the 180-char cap.
 
 - **Non-empty guard in the LLMClient-reuse test is vacuous** (`Tests/FluidDictationIntegrationTests/GrokSTTLoggingRedactionTests.swift`). `files` is seeded with `StreamingTranscriptionSession.swift` before enumerating `Sources/Fluid/Services/GrokSTT`, so `XCTAssertFalse(files.isEmpty)` cannot fail. If the GrokSTT directory moved, the test would still pass after scanning one file. Suggested: assert on the enumerated GrokSTT set (`XCTAssertGreaterThan(grokFiles.count, 10)`) before merging `extra`.
+
+## PR5 review round 2
+
+Blocking/major/overbuilt items applied in this round:
+
+- **Dead `advancedDescription` copy.** `GrokSTTSettingsCopy.advancedDescription` only composed `cardDescription` + `clientKeyDeviation` for `VoiceEngineSettingsViewModel.modelDescriptionText`, which has no callers in `Sources/Fluid`. The required deviation copy already reaches the credentials panel via `cardDescription` (`AISettingsView+SpeechRecognition.swift:191`) and `clientKeyDeviation` (`:882`). Deleted the constant and its test assertions; the dead `.grokSTT` arm of `modelDescriptionText` now returns `cardDescription`. Deleting `modelDescriptionText` itself is out of PR5 scope (shared with every local engine).
+
+### Minors (recorded, not blocking)
+
+### Codex
+
+Approved. No leftover minors.
+
+### Claude
+
+- **`advancedDescription` feeds a computed property with no callers** (`Sources/Fluid/Services/GrokSTT/GrokSTTSettingsCopy.swift`). Also filed as overbuilt; deleted in this round. Suggested leftover: delete the unreferenced `modelDescriptionText` property in a later cleanup.
+
+- **Cookie headers are masked with a Bearer-shaped placeholder** (`Sources/Fluid/Services/GrokSTT/GrokSTTLog.swift`). `maskedHeaderValue` returns the literal `"Bearer [REDACTED]"` for any header whose name contains `auth` or `cookie`. A `Cookie:` header therefore renders as `Cookie: Bearer [REDACTED]`. Redaction itself is correct — `testDescribeRequestMasksCookieHeaders` confirms the secret never reaches the log. Suggested: return a scheme-neutral `"[REDACTED]"` for the cookie branch, keeping `"Bearer [REDACTED]"` only for names containing `auth`.
+
+- **Missing-clock sentinel prints as a negative latency** (`Sources/Fluid/Services/GrokSTT/GrokSTTLog.swift`). `milliseconds(since:)` returns -1 when the reference date is nil. Because `audioDoneAt` is stamped only when the `audio.done` text frame is actually transmitted, a `transcript.done` that arrives without a preceding send logs `ms=-1`. Same for `transcript.created waitMs=-1` if `connectStartedAt` is nil. Suggested: return `Int?` and format the nil case as `ms=n/a`.
