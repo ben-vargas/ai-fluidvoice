@@ -24,9 +24,11 @@ struct VoiceEngineSettingsScreen: View {
         .padding(14)
         .frame(
             maxWidth: .infinity,
-            maxHeight: .infinity,
+            idealHeight: AISettingsLayout.voiceEngineIdealHeight,
+            maxHeight: AISettingsLayout.voiceEngineMaxHeight,
             alignment: .topLeading
         )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 }
 

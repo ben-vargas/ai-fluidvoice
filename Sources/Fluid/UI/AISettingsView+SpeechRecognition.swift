@@ -7,9 +7,7 @@
 
 import SwiftUI
 
-private enum VoiceEngineScrollAnchor {
-    static let grokCredentials = "grokCredentials"
-}
+private let grokCredentialsAnchor = "grokCredentials"
 
 extension VoiceEngineSettingsView {
     // MARK: - Speech Recognition Card
@@ -64,7 +62,7 @@ extension VoiceEngineSettingsView {
                                                     .stroke(self.theme.palette.cardBorder.opacity(0.3), lineWidth: 1)
                                             )
                                     )
-                                    .id(VoiceEngineScrollAnchor.grokCredentials)
+                                    .id(grokCredentialsAnchor)
                             }
 
                             HStack(spacing: 6) {
@@ -184,7 +182,7 @@ extension VoiceEngineSettingsView {
                         guard model == .grokSTT else { return }
                         DispatchQueue.main.async {
                             withAnimation(.easeInOut(duration: 0.3)) {
-                                proxy.scrollTo(VoiceEngineScrollAnchor.grokCredentials, anchor: .top)
+                                proxy.scrollTo(grokCredentialsAnchor, anchor: .top)
                             }
                         }
                     }
@@ -192,7 +190,6 @@ extension VoiceEngineSettingsView {
                 .frame(minHeight: AISettingsLayout.voiceEngineModelListMinHeight)
             }
             .padding(14)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
