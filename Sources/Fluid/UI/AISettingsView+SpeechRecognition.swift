@@ -7,6 +7,10 @@
 
 import SwiftUI
 
+private enum VoiceEngineScrollAnchor {
+    static let grokCredentials = "grokCredentials"
+}
+
 extension VoiceEngineSettingsView {
     // MARK: - Speech Recognition Card
 
@@ -45,131 +49,147 @@ extension VoiceEngineSettingsView {
                             .shadow(color: self.theme.metrics.cardShadow.color.opacity(self.theme.metrics.cardShadow.opacity), radius: self.theme.metrics.cardShadow.radius, x: self.theme.metrics.cardShadow.x, y: self.theme.metrics.cardShadow.y)
                     )
 
-                ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 14) {
-                        if self.viewModel.previewSpeechModel == .grokSTT {
-                            self.grokSTTCredentialsPanel
-                                .padding(12)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .fill(self.theme.palette.contentBackground.opacity(0.6))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 12)
-                                                .stroke(self.theme.palette.cardBorder.opacity(0.3), lineWidth: 1)
-                                        )
-                                )
-                        }
+                ScrollViewReader { proxy in
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(alignment: .leading, spacing: 14) {
+                            if self.viewModel.previewSpeechModel == .grokSTT {
+                                self.grokSTTCredentialsPanel
+                                    .padding(12)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .fill(self.theme.palette.contentBackground.opacity(0.6))
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 12)
+                                                    .stroke(self.theme.palette.cardBorder.opacity(0.3), lineWidth: 1)
+                                            )
+                                    )
+                                    .id(VoiceEngineScrollAnchor.grokCredentials)
+                            }
 
-                        HStack(spacing: 6) {
-                            Image(systemName: "info.circle")
-                                .font(self.theme.typography.bodySmall)
-                                .foregroundStyle(self.voiceEngineSecondaryText)
-                            Text("Click a row to preview. Press Activate to load the model.")
-                                .font(self.theme.typography.bodySmall)
-                                .foregroundStyle(self.voiceEngineSecondaryText)
-                            Spacer()
-                            Menu {
-                                ForEach(SpeechProviderFilter.visibleCases) { option in
-                                    Button(option.rawValue) {
-                                        self.viewModel.providerFilter = option
+                            HStack(spacing: 6) {
+                                Image(systemName: "info.circle")
+                                    .font(self.theme.typography.bodySmall)
+                                    .foregroundStyle(self.voiceEngineSecondaryText)
+                                Text("Click a row to preview. Press Activate to load the model.")
+                                    .font(self.theme.typography.bodySmall)
+                                    .foregroundStyle(self.voiceEngineSecondaryText)
+                                Spacer()
+                                Menu {
+                                    ForEach(SpeechProviderFilter.visibleCases) { option in
+                                        Button(option.rawValue) {
+                                            self.viewModel.providerFilter = option
+                                        }
                                     }
-                                }
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "line.3.horizontal.decrease.circle")
-                                        .font(self.theme.typography.bodySmallStrong)
-                                    Text("Filter: \(self.viewModel.providerFilter.rawValue)")
-                                        .font(self.theme.typography.bodySmallStrong)
-                                }
-                                .foregroundStyle(self.voiceEngineTitleText)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 9)
-                                        .fill(self.theme.palette.cardBackground.opacity(0.8))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 9)
-                                                .stroke(self.theme.palette.cardBorder.opacity(0.5), lineWidth: 1)
-                                        )
-                                )
-                            }
-                            Menu {
-                                ForEach(ModelSortOption.allCases) { option in
-                                    Button(option.rawValue) {
-                                        self.viewModel.modelSortOption = option
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Image(systemName: "line.3.horizontal.decrease.circle")
+                                            .font(self.theme.typography.bodySmallStrong)
+                                        Text("Filter: \(self.viewModel.providerFilter.rawValue)")
+                                            .font(self.theme.typography.bodySmallStrong)
                                     }
-                                }
-                            } label: {
-                                HStack(spacing: 6) {
-                                    Text("Sort by: \(self.viewModel.modelSortOption.rawValue)")
-                                        .font(self.theme.typography.bodySmallStrong)
-                                }
-                                .foregroundStyle(self.voiceEngineTitleText)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 6)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 9)
-                                        .fill(self.theme.palette.cardBackground.opacity(0.8))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 9)
-                                                .stroke(self.theme.palette.cardBorder.opacity(0.5), lineWidth: 1)
-                                        )
-                                )
-                            }
-                        }
-
-                        // Active + Other models list
-                        VStack(alignment: .leading, spacing: 10) {
-                            if let activeModel {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("Active Model")
-                                        .font(self.theme.typography.sectionTitle)
-                                        .foregroundStyle(self.voiceEngineTitleText)
-                                    self.speechModelCard(for: activeModel)
-                                }
-                            } else {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text("Active Model")
-                                        .font(self.theme.typography.sectionTitle)
-                                        .foregroundStyle(self.voiceEngineTitleText)
-                                    Label("No active model yet. Download and activate one below.", systemImage: "arrow.down.circle")
-                                        .font(self.theme.typography.bodySmall)
-                                        .foregroundStyle(self.voiceEngineSecondaryText)
-                                }
-                            }
-
-                            Divider().padding(.vertical, 2)
-
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(hasActiveModel ? "Other Models" : "Available Models")
-                                    .font(self.theme.typography.sectionTitle)
                                     .foregroundStyle(self.voiceEngineTitleText)
-                                VStack(spacing: 8) {
-                                    ForEach(otherModels) { model in
-                                        self.speechModelCard(for: model)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 9)
+                                            .fill(self.theme.palette.cardBackground.opacity(0.8))
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 9)
+                                                    .stroke(self.theme.palette.cardBorder.opacity(0.5), lineWidth: 1)
+                                            )
+                                    )
+                                }
+                                Menu {
+                                    ForEach(ModelSortOption.allCases) { option in
+                                        Button(option.rawValue) {
+                                            self.viewModel.modelSortOption = option
+                                        }
+                                    }
+                                } label: {
+                                    HStack(spacing: 6) {
+                                        Text("Sort by: \(self.viewModel.modelSortOption.rawValue)")
+                                            .font(self.theme.typography.bodySmallStrong)
+                                    }
+                                    .foregroundStyle(self.voiceEngineTitleText)
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 6)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 9)
+                                            .fill(self.theme.palette.cardBackground.opacity(0.8))
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: 9)
+                                                    .stroke(self.theme.palette.cardBorder.opacity(0.5), lineWidth: 1)
+                                            )
+                                    )
+                                }
+                            }
+
+                            // Active + Other models list
+                            VStack(alignment: .leading, spacing: 10) {
+                                if let activeModel {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text("Active Model")
+                                            .font(self.theme.typography.sectionTitle)
+                                            .foregroundStyle(self.voiceEngineTitleText)
+                                        self.speechModelCard(for: activeModel)
+                                    }
+                                } else {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        Text("Active Model")
+                                            .font(self.theme.typography.sectionTitle)
+                                            .foregroundStyle(self.voiceEngineTitleText)
+                                        Label("No active model yet. Download and activate one below.", systemImage: "arrow.down.circle")
+                                            .font(self.theme.typography.bodySmall)
+                                            .foregroundStyle(self.voiceEngineSecondaryText)
+                                    }
+                                }
+
+                                Divider().padding(.vertical, 2)
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(hasActiveModel ? "Other Models" : "Available Models")
+                                        .font(self.theme.typography.sectionTitle)
+                                        .foregroundStyle(self.voiceEngineTitleText)
+                                    VStack(spacing: 8) {
+                                        ForEach(otherModels) { model in
+                                            self.speechModelCard(for: model)
+                                        }
                                     }
                                 }
                             }
+                            .padding(12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 12)
+                                    .fill(self.theme.palette.cardBackground.opacity(0.9))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .stroke(self.theme.palette.cardBorder.opacity(0.3), lineWidth: 1)
+                                    )
+                                    .shadow(
+                                        color: self.theme.metrics.cardShadow.color.opacity(self.theme.metrics.cardShadow.opacity),
+                                        radius: self.theme.metrics.cardShadow.radius,
+                                        x: self.theme.metrics.cardShadow.x,
+                                        y: self.theme.metrics.cardShadow.y
+                                    )
+                            )
+
+                            Divider().padding(.vertical, 4)
+
+                            // Filler Words Section
+                            self.fillerWordsSection
                         }
-                        .padding(12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 12)
-                                .fill(self.theme.palette.cardBackground.opacity(0.9))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12)
-                                        .stroke(self.theme.palette.cardBorder.opacity(0.3), lineWidth: 1)
-                                )
-                                .shadow(color: self.theme.metrics.cardShadow.color.opacity(self.theme.metrics.cardShadow.opacity), radius: self.theme.metrics.cardShadow.radius, x: self.theme.metrics.cardShadow.x, y: self.theme.metrics.cardShadow.y)
-                        )
-
-                        Divider().padding(.vertical, 4)
-
-                        // Filler Words Section
-                        self.fillerWordsSection
+                    }
+                    .onChange(of: self.viewModel.previewSpeechModel) { _, model in
+                        guard model == .grokSTT else { return }
+                        DispatchQueue.main.async {
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                proxy.scrollTo(VoiceEngineScrollAnchor.grokCredentials, anchor: .top)
+                            }
+                        }
                     }
                 }
-                .frame(minHeight: AISettingsLayout.voiceEngineModelListMinHeight, maxHeight: .infinity)
+                .frame(minHeight: AISettingsLayout.voiceEngineModelListMinHeight)
             }
             .padding(14)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -330,7 +350,6 @@ extension VoiceEngineSettingsView {
             }
         }
         .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     func speechModelCard(for model: SettingsStore.SpeechModel) -> some View {
@@ -895,7 +914,6 @@ extension VoiceEngineSettingsView {
             Text(GrokSTTSettingsCopy.clientKeyDeviation)
                 .font(self.theme.typography.bodySmall)
                 .foregroundStyle(self.voiceEngineSecondaryText)
-                .frame(maxWidth: .infinity, alignment: .leading)
 
             if !self.grokSTTCredentialStatus.isEmpty {
                 Text(self.grokSTTCredentialStatus)
@@ -904,7 +922,6 @@ extension VoiceEngineSettingsView {
             }
         }
         .padding(.top, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var grokCLISessionStatusText: String {
