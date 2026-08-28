@@ -19,7 +19,7 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
         XCTAssertEqual(model.badgeText, "Cloud · Experimental")
         XCTAssertEqual(model.provider, .xai)
         XCTAssertEqual(model.brandName, "xAI")
-        XCTAssertFalse(model.modelsExistOnDiskEquivalent)
+        XCTAssertFalse(GrokSTTCatalogStubProvider().modelsExistOnDisk())
         XCTAssertFalse(model.canActivateVoiceEngine)
         XCTAssertFalse(SettingsStore.SpeechModel.grokSTTCatalogVisible)
         XCTAssertFalse(SettingsStore.SpeechModel.availableModels.contains(.grokSTT))
@@ -29,7 +29,6 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
         let model = SettingsStore.SpeechModel.grokSTT
 
         XCTAssertTrue(model.isInstalled)
-        XCTAssertFalse(model.showsVoiceEngineDownloadAction)
         XCTAssertFalse(model.showsVoiceEngineDeleteAction)
         XCTAssertFalse(model.usesAppleLogo && model.hasRemovableLocalArtifacts)
     }
@@ -96,13 +95,5 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
                 credentialSourceConfigured: true
             )
         )
-    }
-}
-
-private extension SettingsStore.SpeechModel {
-    /// Catalog engines with no local artifacts report `modelsExistOnDisk() = false`
-    /// on the provider; SpeechModel itself is installed so the card skips Download.
-    var modelsExistOnDiskEquivalent: Bool {
-        self.isCloudEngine ? false : self.isInstalled
     }
 }

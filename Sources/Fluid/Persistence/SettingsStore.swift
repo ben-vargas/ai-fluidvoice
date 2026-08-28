@@ -5307,10 +5307,6 @@ final class SettingsStore: ObservableObject {
             }
         }
 
-        var showsVoiceEngineDownloadAction: Bool {
-            !self.isInstalled
-        }
-
         var showsVoiceEngineDeleteAction: Bool {
             self.isInstalled && !self.usesAppleLogo && self.hasRemovableLocalArtifacts
         }
