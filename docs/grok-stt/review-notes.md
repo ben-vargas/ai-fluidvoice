@@ -181,3 +181,16 @@ Blocking/major/overbuilt items applied in this round:
 - **onPartial retain cycle broken** (`ASRService.startSessionTranscription`). The closure now weak-captures the session, and every teardown path (`cancelStreamingSession` owner + stale-generation, `resetTranscriptionProvider`) clears `onPartial`. Covered by `testSessionTeardownReleasesSession`.
 - **Overbuilt removals**: `GrokSTTAudioConverter.wav()` (+ `testWAVHeaderPlusPCM`) deleted until a REST caller exists (PR3b/PR4); `ASRService.testStreamingSessionFactory` deleted — tests now inject sessions only through `GrokSTTProvider.setSessionFactory`, exercising the production factory path.
 - **Retry vs provider-reset executor drain** (found while re-running the suite): `resetTranscriptionProvider()` drains the transcription executor asynchronously; a Retry that enqueued its REST call first could be cancelled and re-parked. `retryPendingGrokTranscription` now awaits the pending drain (same pattern as `ensureAsrReady`).
+
+## PR3a round 1
+
+```json
+[
+  {
+    "severity": "minor",
+    "title": "Trailing blank line fails diff check",
+    "detail": "`git diff --check 808fd86..HEAD` reports a new blank line at EOF. This is non-functional polish and does not block approval.",
+    "file": "Sources/Fluid/ContentView.swift",
+    "suggestedFix": "Remove the extra blank line at the end of the file."
+  }
+]
