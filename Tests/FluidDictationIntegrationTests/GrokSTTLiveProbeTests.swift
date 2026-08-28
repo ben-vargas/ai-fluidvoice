@@ -1,7 +1,7 @@
 @testable import FluidVoice_Debug
 import XCTest
 
-/// Opt-in live probes (L1, L3, L6, L7, L12, L13). Never run in CI.
+/// Opt-in live probes (L1, L2, L3, L6, L7, L12, L13). Never run in CI.
 /// Set `GROK_STT_LIVE=1`. Does not reuse LLM Keychain `com.fluidvoice.provider-api-keys`.
 final class GrokSTTLiveProbeTests: XCTestCase {
     func testL1APIKeyRESTPCMAndEmptyAudio() async throws {
@@ -31,6 +31,29 @@ final class GrokSTTLiveProbeTests: XCTestCase {
             Self.assertEmptyAudio4xx(status: http.lastStatus, error: error)
         }
         XCTAssertEqual(resolver.unauthorizedCallCount, 0, "L1 must not fail over to a CLI session")
+    }
+
+    func testL2APIKeyWebSocket() async throws {
+        try Self.requireLive()
+        let key = try Self.requireSTTAPIKey()
+        let resolver = RecordingGrokSTTResolver(source: .apiKey, bearer: key)
+        let session = GrokSTTWebSocketSession(
+            configuration: .grokDictation,
+            resolver: resolver,
+            apiKeySocketEnabled: true
+        )
+        let samples = try Self.fixtureSamples()
+        let text = try await Task.detached {
+            session.handoffUnsentPCM(samples)
+            try await session.start()
+            return try await session.finish()
+        }.value
+        XCTAssertFalse(
+            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+            "L2 must assemble partials even if transcript.done.text is empty"
+        )
+        XCTAssertEqual(resolver.unauthorizedCallCount, 0, "L2 must not fail over to a CLI session")
+        session.cancel()
     }
 
     func testL3CLITokenREST() async throws {

@@ -4580,10 +4580,9 @@ final class SettingsStore: ObservableObject {
         nonisolated static let grokSTTActivateEnabled = true
         /// L4 2026-08-28: CLI-token WebSocket reached `transcript.created` + partials + `transcript.done`.
         nonisolated static let grokSTTCLISocketEnabled = true
-        /// L2 2026-08-28: API-key WebSocket probe was SKIPPED (no xAI API key on the
-        /// probe machine; docs/grok-stt/probes-PR3b.md). An unprobed socket path does
-        /// not ship as a dictation path. Flip to `true` only after L2 actually passes.
-        nonisolated static let grokSTTAPIKeySocketEnabled = false
+        /// L2 2026-08-28: API-key WebSocket reached `transcript.created` + 3 partials
+        /// + `transcript.done` (docs/grok-stt/probes-PR3b.md). Same protocol as L4.
+        nonisolated static let grokSTTAPIKeySocketEnabled = true
 
         /// True when the selected STT auth mode's source is configured.
         static var grokSTTCredentialSourceConfigured: Bool {

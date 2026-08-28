@@ -41,7 +41,7 @@ final class GrokSTTSettingsCopyTests: XCTestCase {
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTTCatalogVisible)
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTTActivateEnabled)
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTTCLISocketEnabled)
-        XCTAssertFalse(SettingsStore.SpeechModel.grokSTTAPIKeySocketEnabled)
+        XCTAssertTrue(SettingsStore.SpeechModel.grokSTTAPIKeySocketEnabled)
         XCTAssertTrue(SettingsStore.SpeechModel.availableModels.contains(.grokSTT))
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTT.supportsStreaming)
         XCTAssertFalse(GrokSTTProvider().modelsExistOnDisk())

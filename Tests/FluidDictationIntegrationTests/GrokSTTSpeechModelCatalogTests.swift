@@ -23,8 +23,8 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTTCatalogVisible)
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTTActivateEnabled)
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTTCLISocketEnabled)
-        // L2 API-key WebSocket probe has not run; the unprobed path must stay off.
-        XCTAssertFalse(SettingsStore.SpeechModel.grokSTTAPIKeySocketEnabled)
+        // L2 2026-08-28: API-key WebSocket probe passed.
+        XCTAssertTrue(SettingsStore.SpeechModel.grokSTTAPIKeySocketEnabled)
         XCTAssertTrue(SettingsStore.SpeechModel.availableModels.contains(.grokSTT))
     }
 
@@ -100,8 +100,7 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
                 credentialSourceConfigured: true
             )
         )
-        // The default auth mode is .apiKey, whose socket is disabled until probe
-        // L2 runs — so all-gates-true is only selectable in CLI-session mode.
+        // L2 passed: both CLI-session and API-key sockets are selectable.
         XCTAssertTrue(
             SettingsStore.SpeechModel.isGrokSTTSelectable(
                 catalogVisible: true,
@@ -110,7 +109,7 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
                 authMode: .grokCLISession
             )
         )
-        XCTAssertFalse(
+        XCTAssertTrue(
             SettingsStore.SpeechModel.isGrokSTTSelectable(
                 catalogVisible: true,
                 activateEnabled: true,

@@ -9,14 +9,14 @@ Tokens are not recorded here. `refresh_token` was not decoded. `~/.grok/auth.jso
 
 | Source | Present | Notes |
 |---|---|---|
-| xAI API key (`XAI_API_KEY` / `com.fluidvoice.stt-credentials`) | **No** | Not in process env, launchctl, or STT Keychain. LLM Keychain `com.fluidvoice.provider-api-keys` was not reused. |
+| xAI API key (`XAI_API_KEY` / `com.fluidvoice.stt-credentials`) | **Yes** (L2 rerun later 2026-08-28) | Present in STT Keychain `com.fluidvoice.stt-credentials` / `xai-stt-api-key`. Not in process env. LLM Keychain `com.fluidvoice.provider-api-keys` was not reused. |
 | Grok CLI store (`~/.grok/auth.json` `key` field) | **Yes** | One unexpired entry (`expires_at` 2026-08-28T13:43:43Z at probe time 10:23Z). |
 
 ## Results
 
 | ID | Case | Result | Evidence |
 |---|---|---|---|
-| **L2** | API-key WebSocket | **Skipped** | No API key available. Not faked. Same endpoint/protocol as L4. **API-key socket disabled** (`grokSTTAPIKeySocketEnabled = false`) until L2 actually runs. |
+| **L2** | API-key WebSocket | **Pass** (rerun 2026-08-28) | First run skipped (no key). Rerun with STT Keychain key: `transcript.created` then three `transcript.partial` (textLen 19 each) then `transcript.done` (textLen 0). 200-class session, not 401. Same protocol as L4. Token not recorded. **API-key socket enabled.** |
 | **L4** | CLI-token WebSocket | **Pass** | `transcript.created` (keys: `id`, `type`) then three `transcript.partial` (`is_final` false → true/`speech_final` false → true/`speech_final` true; textLen 19 each) then `transcript.done`. 200-class session, not 401. **CLI-socket enabled.** |
 | **L5** | Wait-for-created | **Pass** | First server event was `transcript.created`. Client sent no audio before that event. |
 | **L8** | Offline / unreachable | **Pass** | `wss://192.0.2.1/v1/stt` failed (`unreachable error`, ~3 s). Maps to `.offline` in `GrokSTTTransportErrorMapper`. |
@@ -25,7 +25,7 @@ Tokens are not recorded here. `refresh_token` was not decoded. `~/.grok/auth.jso
 
 ## Gate
 
-L4 passed → **CLI-socket ships** (`SettingsStore.SpeechModel.grokSTTCLISocketEnabled = true`). L2 skipped → **API-key WebSocket does not ship yet** (`SettingsStore.SpeechModel.grokSTTAPIKeySocketEnabled = false`); the API-key auth mode is not selectable for dictation until L2 passes on a machine with a key, then the flag flips to `true`. Dictation is the socket, not silent REST-on-stop.
+L4 passed → **CLI-socket ships** (`SettingsStore.SpeechModel.grokSTTCLISocketEnabled = true`). L2 passed → **API-key WebSocket ships** (`SettingsStore.SpeechModel.grokSTTAPIKeySocketEnabled = true`). Dictation is the socket, not silent REST-on-stop.
 
 ## Protocol notes (from L4)
 
