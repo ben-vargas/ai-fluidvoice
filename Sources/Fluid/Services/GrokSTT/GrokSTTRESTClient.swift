@@ -156,12 +156,6 @@ final nonisolated class GrokSTTRESTClient: @unchecked Sendable {
         } catch {
             throw GrokSTTError.invalidAudio
         }
-        if data.isEmpty {
-            throw GrokSTTError.invalidAudio
-        }
-        if data.count > Self.maxFileBytes {
-            throw GrokSTTError.fileTooLarge
-        }
         let filename = Self.sanitizedFilename(fileURL.lastPathComponent)
         let mimeType = Self.mimeType(forFilename: filename)
         let resolvedTimeout = timeout ?? Self.meetingTimeout(durationSeconds: Self.durationSeconds(of: fileURL))
