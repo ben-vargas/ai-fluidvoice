@@ -13,3 +13,21 @@ Minors from review rounds. Do not treat these as open PR work unless a later PR�
 - **Unreachable training-content branch leaves an empty padded panel** (`Sources/Fluid/Views/AutomaticDictionaryCorrectionOverlay.swift`). The “Voice training is unavailable…” explainer and the `if supportsPronunciationTraining` wrapper around the training panel body were dead code (`.training` is only reachable through the hidden button). Also filed as a major/overbuilt finding; the dead code was deleted in the round-1 fix. Recorded here because Claude also filed it as a minor.
 
 - **README advertises an engine no user can select** (`README.md`). The Supported Models row for `Grok Speech (xAI)` includes “(hidden until credentials ship).” PR1 ships with `grokSTTCatalogVisible = false` and `grokSTTActivateEnabled = false`. GROK-STT-DESIGN asks PR1 for a models table row, so this is a judgement call rather than a spec miss. Suggested: move the row to PR3b, or reword the parenthetical to say the engine is not yet available in released builds.
+
+## PR1 review round 2
+
+### Codex
+
+No items.
+
+### Claude
+
+- **U1 `modelsExistOnDisk` assertion was tautological** (`Tests/FluidDictationIntegrationTests/GrokSTTSpeechModelCatalogTests.swift`). Also filed as overbuilt/major; the private `modelsExistOnDiskEquivalent` extension was deleted in the round-2 fix and the test now asserts `GrokSTTCatalogStubProvider().modelsExistOnDisk()`. Suggested leftover polish: drop the `:34` conjunction (`usesAppleLogo && hasRemovableLocalArtifacts`); both operands are already asserted individually.
+
+- **`showsVoiceEngineDownloadAction` was dead in production** (`Sources/Fluid/Persistence/SettingsStore.swift`). Also filed as overbuilt/major; the unused helper was deleted in the round-2 fix. U4 now asserts `model.isInstalled` (the view’s actual Download gate at `AISettingsView+SpeechRecognition.swift:449`) plus `showsVoiceEngineDeleteAction` (wired at `:467`).
+
+- **Engine card omits the required API-key / CLI-session billing disclosure** (`Sources/Fluid/Persistence/SettingsStore.swift`). GROK-STT-DESIGN “Engine card copy (required)” specifies four paragraphs. PR1 ships paragraph 1 (`cardDescription`) and the proxy/client-key sentence (VoiceEngineSettingsViewModel advanced info only). Missing: API-key rate disclosure (~$0.20/hr streaming, ~$0.10/hr REST) and the Grok CLI session paragraph (experimental, undocumented, read-only `~/.grok/auth.json`, billing unknown, FluidVoice never writes that file). Assign those two paragraphs to **PR2**, which owns the auth card; do not assume PR1 already shipped them.
+
+- **WelcomeView groups `.grokSTT` with `.automatic`/`.whisper`** (`WelcomeView.swift:2698`, `:2720`, `:2867`). Route-selection compares `onboardingSelectedLanguageID` and reports `languageChanged = false`, ignoring `selectedGrokSTTLanguageCode`. Unreachable today (`routeCandidates` never emits Grok; `testOnboardingRouteCandidatesDoNotIncludeGrok` locks that in); the arms exist to satisfy the exhaustive switch. Suggested: split `.grokSTT` into its own arm (`return false` / `languageChanged = false`) with a comment that Grok is intentionally excluded from onboarding.
+
+- **Three Grok language helpers have no production caller in PR1** (`SettingsStore.grokSTTQueryLanguageParameter`, `VoiceEngineLanguageCatalog.grokSTTLanguages`, `grokSTTLanguageCode(for:)`). Leave them; they are consumed by PR3b/PR4 (the query param is the Auto-omits-`language` contract). If PR3b lands without using `grokSTTQueryLanguageParameter`, delete it then and fold U16’s Auto-omission assertion onto `grokSTTLanguageCode(fromStoredValue:)`.
