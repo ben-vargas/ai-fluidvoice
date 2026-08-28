@@ -1,8 +1,9 @@
 import Foundation
 
 nonisolated protocol GrokSTTCredentialResolving: Sendable {
-    /// True when a credential *source* is configured (key present or store readable with a `key`).
-    /// Must not become false because the token is expired or the network is down.
+    /// True when the *selected mode's* credential source is configured
+    /// (API-key mode: Keychain key present; CLI-session mode: store readable with a `key`).
+    /// Must not become false merely because the token is expired or the network is down.
     var isSourceConfigured: Bool { get }
 
     func resolveCredential() async throws -> GrokSTTCredential

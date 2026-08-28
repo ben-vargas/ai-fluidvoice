@@ -55,10 +55,12 @@ final nonisolated class GrokSTTCredentialResolver: GrokSTTCredentialResolving, @
     }
 
     var isSourceConfigured: Bool {
-        if self.dependencies.apiKeyStore.hasAPIKey {
-            return true
+        switch self.dependencies.authMode() {
+        case .apiKey:
+            return self.dependencies.apiKeyStore.hasAPIKey
+        case .grokCLISession:
+            return self.dependencies.authStore.hasReadableKey()
         }
-        return self.dependencies.authStore.hasReadableKey()
     }
 
     var selectedAuthMode: GrokSTTAuthMode {

@@ -4579,16 +4579,32 @@ final class SettingsStore: ObservableObject {
         /// Flip to `true` in PR3b once the real WebSocket session is wired.
         static let grokSTTActivateEnabled = false
 
-        /// True when an STT API key exists or the CLI store is readable with a `key` field.
+        /// True when the selected STT auth mode's source is configured.
         static var grokSTTCredentialSourceConfigured: Bool {
             GrokSTTCredentialResolver.shared.isSourceConfigured
         }
 
         static func isGrokSTTSelectable(
             catalogVisible: Bool = grokSTTCatalogVisible,
+            activateEnabled: Bool = grokSTTActivateEnabled,
             credentialSourceConfigured: Bool = grokSTTCredentialSourceConfigured
         ) -> Bool {
-            catalogVisible && credentialSourceConfigured
+            catalogVisible && activateEnabled && credentialSourceConfigured
+        }
+
+        /// Resolves a stored speech-model raw value. Grok falls back unless the live
+        /// selectability gate is open (catalog + Activate + selected-mode source).
+        nonisolated static func resolvedSpeechModel(
+            rawValue: String,
+            isGrokSelectable: Bool
+        ) -> SpeechModel {
+            guard let model = SpeechModel(rawValue: rawValue) else {
+                return defaultModel
+            }
+            if model == .grokSTT, !isGrokSelectable {
+                return defaultModel
+            }
+            return model
         }
 
         // MARK: - FluidAudio Models (Apple Silicon Only)
@@ -5834,13 +5850,14 @@ extension SettingsStore {
         get {
             // Check if already using new system
             if let rawValue = defaults.string(forKey: Keys.selectedSpeechModel),
-               let model = SpeechModel(rawValue: rawValue)
+               SpeechModel(rawValue: rawValue) != nil
             {
+                let model = SpeechModel.resolvedSpeechModel(
+                    rawValue: rawValue,
+                    isGrokSelectable: SpeechModel.isGrokSTTSelectable()
+                )
                 // If Qwen was previously selected, transparently fall back while preview is disabled.
                 if model == .qwen3Asr, !SpeechModel.qwenPreviewEnabled {
-                    return SpeechModel.defaultModel
-                }
-                if model == .grokSTT, !SpeechModel.isGrokSTTSelectable() {
                     return SpeechModel.defaultModel
                 }
                 if model == .nemotronStreaming320 {

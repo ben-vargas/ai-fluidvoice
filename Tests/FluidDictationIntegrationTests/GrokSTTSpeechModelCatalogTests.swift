@@ -76,28 +76,35 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTT.isCloudEngine)
     }
 
-    func testGrokSTTIsNotSelectableWithoutCatalogAndCredential() {
-        XCTAssertEqual(
-            SettingsStore.SpeechModel.isGrokSTTSelectable(),
-            SettingsStore.SpeechModel.grokSTTCredentialSourceConfigured
-        )
+    func testGrokSTTIsNotSelectableWithoutCatalogActivateAndCredential() {
         XCTAssertFalse(
             SettingsStore.SpeechModel.isGrokSTTSelectable(
                 catalogVisible: true,
+                activateEnabled: true,
                 credentialSourceConfigured: false
             )
         )
         XCTAssertFalse(
             SettingsStore.SpeechModel.isGrokSTTSelectable(
                 catalogVisible: false,
+                activateEnabled: true,
+                credentialSourceConfigured: true
+            )
+        )
+        XCTAssertFalse(
+            SettingsStore.SpeechModel.isGrokSTTSelectable(
+                catalogVisible: true,
+                activateEnabled: false,
                 credentialSourceConfigured: true
             )
         )
         XCTAssertTrue(
             SettingsStore.SpeechModel.isGrokSTTSelectable(
                 catalogVisible: true,
+                activateEnabled: true,
                 credentialSourceConfigured: true
             )
         )
+        XCTAssertFalse(SettingsStore.SpeechModel.isGrokSTTSelectable())
     }
 }

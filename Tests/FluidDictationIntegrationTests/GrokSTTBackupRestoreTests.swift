@@ -2,8 +2,6 @@
 import XCTest
 
 final class GrokSTTBackupRestoreTests: XCTestCase {
-    private let selectedSpeechModelKey = "SelectedSpeechModel"
-
     func testAutomaticGrokLanguageRoundTripsThroughBackupValue() {
         let backupValue = SettingsStore.grokSTTLanguageBackupValue(for: nil)
 
@@ -43,30 +41,42 @@ final class GrokSTTBackupRestoreTests: XCTestCase {
 
     func testRestoringGrokSTTWithoutCredentialSourceFallsBackToDefaultModel() {
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTTCatalogVisible)
+        XCTAssertFalse(SettingsStore.SpeechModel.grokSTTActivateEnabled)
         XCTAssertFalse(
             SettingsStore.SpeechModel.isGrokSTTSelectable(
                 catalogVisible: true,
+                activateEnabled: false,
                 credentialSourceConfigured: false
             )
         )
+        XCTAssertFalse(
+            SettingsStore.SpeechModel.isGrokSTTSelectable(
+                catalogVisible: true,
+                activateEnabled: false,
+                credentialSourceConfigured: true
+            )
+        )
 
-        let defaults = UserDefaults.standard
-        let previous = defaults.string(forKey: self.selectedSpeechModelKey)
-        defer {
-            if let previous {
-                defaults.set(previous, forKey: self.selectedSpeechModelKey)
-            } else {
-                defaults.removeObject(forKey: self.selectedSpeechModelKey)
-            }
-        }
-
-        defaults.set(SettingsStore.SpeechModel.grokSTT.rawValue, forKey: self.selectedSpeechModelKey)
-
-        if SettingsStore.SpeechModel.grokSTTCredentialSourceConfigured {
-            XCTAssertEqual(SettingsStore.shared.selectedSpeechModel, .grokSTT)
-        } else {
-            XCTAssertEqual(SettingsStore.shared.selectedSpeechModel, SettingsStore.SpeechModel.defaultModel)
-            XCTAssertNotEqual(SettingsStore.shared.selectedSpeechModel, .grokSTT)
-        }
+        XCTAssertEqual(
+            SettingsStore.SpeechModel.resolvedSpeechModel(
+                rawValue: SettingsStore.SpeechModel.grokSTT.rawValue,
+                isGrokSelectable: false
+            ),
+            SettingsStore.SpeechModel.defaultModel
+        )
+        XCTAssertNotEqual(
+            SettingsStore.SpeechModel.resolvedSpeechModel(
+                rawValue: SettingsStore.SpeechModel.grokSTT.rawValue,
+                isGrokSelectable: false
+            ),
+            .grokSTT
+        )
+        XCTAssertEqual(
+            SettingsStore.SpeechModel.resolvedSpeechModel(
+                rawValue: SettingsStore.SpeechModel.grokSTT.rawValue,
+                isGrokSelectable: true
+            ),
+            .grokSTT
+        )
     }
 }
