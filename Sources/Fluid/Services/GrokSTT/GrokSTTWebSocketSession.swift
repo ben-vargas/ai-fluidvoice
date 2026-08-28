@@ -143,15 +143,16 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
     func append(pcm16: Data) {
         self.lock.lock()
         if self.state != .streaming {
-            let state = self.state
-            self.lock.unlock()
             #if DEBUG
-            switch state {
-            case .finishing, .complete, .cancelled, .failed:
-                assertionFailure("append(pcm16:) after finish/cancel is illegal (state=\(state.rawValue))")
-            default:
-                break
-            }
+            let audioDone = self.audioDoneSent
+            #endif
+            self.lock.unlock()
+            // Not asserted on state alone: the pump can legally race a receive-loop
+            // failure (`.failed`) or an Esc cancel between its gate check and this
+            // call — a retryable mid-hold drop must not trap Debug builds. Only a
+            // sent `audio.done` proves `finish()` ran with the pump still appending.
+            #if DEBUG
+            assert(!audioDone, "append(pcm16:) after audio.done is illegal")
             #endif
             return
         }
@@ -225,7 +226,6 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
 
     func cancel() {
         self.lock.lock()
-        let alreadyTerminal = self.state == .cancelled || self.state == .complete
         self.state = .cancelled
         self.connectAborted = true
         let outboundWaiters = self.abortOutboundLocked()
@@ -246,9 +246,10 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
         finishers.forEach { $0.resume(throwing: GrokSTTError.cancelled) }
         connectAbort.forEach { $0.resume(throwing: GrokSTTError.cancelled) }
         receiveTask?.cancel()
-        if !alreadyTerminal {
-            connection?.close()
-        }
+        // Close even from a terminal state: a completed session may still hold a
+        // connection (post-`audio.done` transport failure resolved with text), and
+        // `close()` is idempotent — skipping it here would leak the URLSession.
+        connection?.close()
     }
 
     static func makeURL(configuration: StreamingSTTSessionConfiguration) -> URL {
@@ -508,6 +509,7 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
                     }
                 }
                 self.resumeFinishWaiters(.success(assembled))
+                self.closeConnection()
                 return
             }
             self.fail(mapped, close: false)

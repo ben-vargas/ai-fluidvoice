@@ -153,6 +153,50 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         connection.emitError(GrokSTTError.socketClosed(code: 1006))
         let text = try await finish.value
         XCTAssertEqual(text, "kept")
+        await grokSTTAssertEventually { connection.closed }
+        session.cancel()
+        XCTAssertTrue(connection.closed)
+    }
+
+    func testAppendAfterMidStreamTransportFailureIsSafeNoOp() async throws {
+        let transport = FakeGrokSTTWebSocketTransport()
+        let connection = FakeGrokSTTWebSocketConnection()
+        transport.enqueueConnection(connection)
+        let session = GrokSTTWebSocketSession(
+            configuration: .grokDictation,
+            resolver: RecordingGrokSTTResolver(),
+            transport: transport,
+            apiKeySocketEnabled: true
+        )
+        let start = Task.detached { try await session.start() }
+        await grokSTTAssertEventually { transport.connections.count == 1 }
+        connection.emitJSON(["type": "transcript.created"])
+        try await start.value
+        connection.emitError(GrokSTTError.socketClosed(code: 1006))
+        await grokSTTAssertEventually { session.transportError != nil }
+        XCTAssertEqual(session.currentState, .failed)
+
+        // The pump can race the receive-loop failure; this must not trap Debug builds.
+        session.append(pcm16: Data(count: GrokSTTAudioConverter.bytesPerFrame))
+        XCTAssertEqual(session.debugAppendedFrameCount, 0)
+        XCTAssertFalse(session.debugAudioDoneSent)
+    }
+
+    func testAPIKeySocketDisabledThrowsWithoutConnecting() async {
+        let transport = FakeGrokSTTWebSocketTransport()
+        let session = GrokSTTWebSocketSession(
+            configuration: .grokDictation,
+            resolver: RecordingGrokSTTResolver(source: .apiKey),
+            transport: transport,
+            apiKeySocketEnabled: false
+        )
+        do {
+            try await Task.detached { try await session.start() }.value
+            XCTFail("API-key socket disabled must throw")
+        } catch {
+            XCTAssertEqual((error as? GrokSTTError)?.numericCode, 1500)
+        }
+        XCTAssertTrue(transport.requests.isEmpty)
     }
 
     func testHandoffThenFinishSendsFromSampleZero() async throws {
