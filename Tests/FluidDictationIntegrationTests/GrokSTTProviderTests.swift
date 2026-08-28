@@ -52,34 +52,40 @@ final class GrokSTTProviderTests: XCTestCase {
             resolver: resolver,
             restClient: GrokSTTRESTClient(resolver: resolver, http: http)
         )
-        let result = try await provider.transcribeFinal([0.25, 0.5])
+        let result = try await provider.transcribeFinal(
+            [0.25, 0.5],
+            languageCode: nil,
+            keyterms: []
+        )
         XCTAssertEqual(result.text, "rest-final")
         XCTAssertEqual(http.requests.count, 1)
     }
 
-    func testTranscribeFinalIncludesSessionKeyterms() async throws {
+    func testGenericTranscribeDoesNotReachRESTClient() async {
         let http = FakeGrokSTTHTTPClient()
-        http.enqueue(status: 200, json: ["text": "rest-with-terms"])
+        http.enqueue(status: 200, json: ["text": "should-not-see"])
         let resolver = StubGrokSTTResolver()
         let provider = GrokSTTProvider(
             resolver: resolver,
             restClient: GrokSTTRESTClient(resolver: resolver, http: http)
         )
-        _ = try provider.makeStreamingSession(
-            configuration: StreamingSTTSessionConfiguration(
-                sampleRate: 16_000,
-                languageCode: nil,
-                keyterms: ["FluidVoice", "Grok"],
-                interimResults: true
-            )
+        let expected = GrokSTTError.server(
+            status: 501,
+            message: "Grok REST speech-to-text is not available yet."
         )
-        let result = try await provider.transcribeFinal([0.25, 0.5])
-        XCTAssertEqual(result.text, "rest-with-terms")
-        XCTAssertEqual(http.requests.count, 1)
-        let body = String(decoding: http.requests[0].httpBody ?? Data(), as: UTF8.self)
-        XCTAssertTrue(body.contains("name=\"keyterm\""))
-        XCTAssertTrue(body.contains("FluidVoice"))
-        XCTAssertTrue(body.contains("Grok"))
+        do {
+            _ = try await provider.transcribe([0.25, 0.5])
+            XCTFail("generic transcribe must stay closed until PR4")
+        } catch {
+            XCTAssertEqual(error as? GrokSTTError, expected)
+        }
+        do {
+            _ = try await provider.transcribeFinal([0.25, 0.5])
+            XCTFail("no-keyterms transcribeFinal must stay closed until PR4")
+        } catch {
+            XCTAssertEqual(error as? GrokSTTError, expected)
+        }
+        XCTAssertEqual(http.requests.count, 0)
     }
 
     func testWireLanguageCodeOmitsAutoAndMapsTl() {
@@ -130,7 +136,7 @@ final class GrokSTTProviderTests: XCTestCase {
         Task { @MainActor in
             do {
                 let final = try await executor.run {
-                    try await provider.transcribeFinal([0.25])
+                    try await provider.transcribeFinal([0.25], languageCode: nil, keyterms: nil)
                 }
                 XCTAssertEqual(final.text, "ok")
                 let file = try await executor.run {

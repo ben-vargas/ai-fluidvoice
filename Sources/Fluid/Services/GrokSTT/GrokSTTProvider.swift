@@ -13,7 +13,11 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     private let socketTransport: any GrokSTTWebSocketTransporting
     private let cliSocketEnabled: Bool
     private let lock = NSLock()
-    private var restKeyterms: [String] = []
+    /// Meetings / LocalAPI PCM REST stays closed until PR4's consent notices land.
+    private static let restNotYetAvailable = GrokSTTError.server(
+        status: 501,
+        message: "Grok REST speech-to-text is not available yet."
+    )
 
     #if DEBUG
     private var sessionFactory: ((StreamingSTTSessionConfiguration) throws -> StreamingTranscriptionSession)?
@@ -81,7 +85,8 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     }
 
     nonisolated func transcribe(_ samples: [Float]) async throws -> ASRTranscriptionResult {
-        try await self.transcribeFinal(samples)
+        _ = samples
+        throw Self.restNotYetAvailable
     }
 
     nonisolated func transcribeStreaming(_ samples: [Float]) async throws -> ASRTranscriptionResult {
@@ -90,11 +95,14 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     }
 
     nonisolated func transcribeFinal(_ samples: [Float]) async throws -> ASRTranscriptionResult {
-        try await self.transcribeFinal(samples, languageCode: nil)
+        _ = samples
+        throw Self.restNotYetAvailable
     }
 
     nonisolated func transcribeFinal(_ samples: [Float], languageCode: String?) async throws -> ASRTranscriptionResult {
-        try await self.transcribeFinal(samples, languageCode: languageCode, keyterms: nil)
+        _ = samples
+        _ = languageCode
+        throw Self.restNotYetAvailable
     }
 
     nonisolated func transcribeFinal(
@@ -108,11 +116,10 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
                 return try await restFinalHandler(samples, languageCode)
             }
             #endif
-            let terms = keyterms ?? self.lock.withLock { self.restKeyterms }
             return try await self.restClient.transcribePCM(
                 samples,
                 languageCode: Self.wireLanguageCode(languageCode),
-                keyterms: terms
+                keyterms: keyterms ?? []
             )
         }.value
     }
@@ -129,7 +136,7 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
                 return try await restFileHandler(fileURL)
             }
             #endif
-            throw GrokSTTError.server(status: 501, message: "Grok REST speech-to-text is not available yet.")
+            throw Self.restNotYetAvailable
         }.value
     }
 
@@ -140,7 +147,6 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     func makeStreamingSession(
         configuration: StreamingSTTSessionConfiguration
     ) throws -> StreamingTranscriptionSession {
-        self.lock.withLock { self.restKeyterms = configuration.keyterms }
         #if DEBUG
         if let factory = self.lock.withLock({ self.sessionFactory }) {
             return try factory(configuration)
