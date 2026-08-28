@@ -22,7 +22,13 @@ struct VoiceEngineSettingsScreen: View {
             theme: self.theme
         )
         .padding(14)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: AISettingsLayout.voiceEngineMinHeight,
+            idealHeight: AISettingsLayout.voiceEngineIdealHeight,
+            maxHeight: AISettingsLayout.voiceEngineMaxHeight,
+            alignment: .topLeading
+        )
     }
 }
 

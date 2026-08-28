@@ -44,9 +44,24 @@ extension VoiceEngineSettingsView {
                             )
                             .shadow(color: self.theme.metrics.cardShadow.color.opacity(self.theme.metrics.cardShadow.opacity), radius: self.theme.metrics.cardShadow.radius, x: self.theme.metrics.cardShadow.x, y: self.theme.metrics.cardShadow.y)
                     )
+                    .layoutPriority(0)
 
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 14) {
+                        if self.viewModel.previewSpeechModel == .grokSTT {
+                            self.grokSTTCredentialsPanel
+                                .padding(12)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(self.theme.palette.contentBackground.opacity(0.6))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12)
+                                                .stroke(self.theme.palette.cardBorder.opacity(0.3), lineWidth: 1)
+                                        )
+                                )
+                        }
+
                         HStack(spacing: 6) {
                             Image(systemName: "info.circle")
                                 .font(self.theme.typography.bodySmall)
@@ -155,8 +170,11 @@ extension VoiceEngineSettingsView {
                         self.fillerWordsSection
                     }
                 }
+                .frame(minHeight: AISettingsLayout.voiceEngineModelListMinHeight, maxHeight: .infinity)
+                .layoutPriority(1)
             }
             .padding(14)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -234,10 +252,6 @@ extension VoiceEngineSettingsView {
                                 .font(self.theme.typography.bodySmall)
                                 .foregroundStyle(.orange)
                         }
-                    }
-
-                    if model == .grokSTT {
-                        self.grokSTTCredentialsPanel
                     }
 
                     // Memory warning for large models
@@ -318,6 +332,7 @@ extension VoiceEngineSettingsView {
             }
         }
         .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     func speechModelCard(for model: SettingsStore.SpeechModel) -> some View {
@@ -852,8 +867,8 @@ extension VoiceEngineSettingsView {
                     .foregroundStyle(self.voiceEngineSecondaryText)
                 }
                 Text(GrokSTTSettingsCopy.cliSessionExperimental)
-                .font(self.theme.typography.bodySmall)
-                .foregroundStyle(self.voiceEngineSecondaryText)
+                    .font(self.theme.typography.bodySmall)
+                    .foregroundStyle(self.voiceEngineSecondaryText)
                 Text(self.grokCLISessionStatusText)
                     .font(self.theme.typography.bodySmall)
                     .foregroundStyle(self.voiceEngineSecondaryText)
@@ -882,6 +897,7 @@ extension VoiceEngineSettingsView {
             Text(GrokSTTSettingsCopy.clientKeyDeviation)
                 .font(self.theme.typography.bodySmall)
                 .foregroundStyle(self.voiceEngineSecondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if !self.grokSTTCredentialStatus.isEmpty {
                 Text(self.grokSTTCredentialStatus)
@@ -890,6 +906,7 @@ extension VoiceEngineSettingsView {
             }
         }
         .padding(.top, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var grokCLISessionStatusText: String {
