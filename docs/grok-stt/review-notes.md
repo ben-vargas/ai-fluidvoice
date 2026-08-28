@@ -224,3 +224,19 @@ No leftover minors. The L2 API-key WebSocket probe remains skipped: no STT API k
 - **`isGrokSTTSelectable` reads `UserDefaults.standard` instead of the store's injected defaults** (`Sources/Fluid/Persistence/SettingsStore.swift`). The `authMode` default argument hardcodes `UserDefaults.standard.string(forKey: grokSTTAuthModeDefaultsKey)` (`:4594-4596`), while `SettingsStore.grokSTTAuthMode` reads `self.defaults` (`:5962-5966`). A test or configuration that injects a non-standard defaults suite will see the two disagree. `GrokSTTCredentialResolverDependencies.production()` has the same pattern (PR2). Suggested: thread the auth mode in from the caller (or `SettingsStore.shared.grokSTTAuthMode`) rather than reading `UserDefaults.standard` in a default argument.
 
 - **`canActivateVoiceEngine` now performs Keychain / auth.json I/O from a SwiftUI body** (`Sources/Fluid/Persistence/SettingsStore.swift`). `SpeechModel.canActivateVoiceEngine` calls `isGrokSTTSelectable()`, which evaluates `grokSTTCredentialSourceConfigured` → Keychain or `~/.grok/auth.json` I/O. That property is read from `.disabled(...)` in the engine list body (`AISettingsView+SpeechRecognition.swift:475`) on every render. Only the Grok row reaches it. PR2 already calls the same property at `:775` / `:790`. Suggested: cache the credential-source result in `VoiceEngineSettingsViewModel` (refreshed on appear and on auth-mode/key change).
+
+## PR3b review round 3
+
+Blocking/major items applied in this round: remaining created-budget bounds credential resolve and `transport.connect`; URLSession `open()` is cancellation-aware; `timeoutIntervalForResource` is no longer the 20 s connect cap.
+
+### Codex
+
+- **Post-audio.done transport success leaks its connection** (`Sources/Fluid/Services/GrokSTT/GrokSTTWebSocketSession.swift:406`). When transport fails after `audio.done` with assembled text, `handleTransportFailure` marks the session complete and resumes finish waiters without closing the connection. Later `cancel()` treats `.complete` as already terminal and also skips close. Suggested: call `closeConnection()` before returning success and assert the fake connection closes in `testPostDoneTransportErrorWithTextSucceeds`. Same leftover as Claude's round-2 leak note.
+
+- **Selectability bypasses injected settings defaults** (`Sources/Fluid/Persistence/SettingsStore.swift:4589`). `isGrokSTTSelectable`'s default `authMode` reads `UserDefaults.standard` directly, while `SettingsStore` can use an injected defaults suite. Suggested: pass the owning store's auth mode into the gate or inject the defaults source. Same leftover as Claude's round-2 selectable-defaults note.
+
+### Claude
+
+- **URLSession + connection leak on post-`audio.done` transport drop** (`Sources/Fluid/Services/GrokSTT/GrokSTTWebSocketSession.swift`). Carried from round 2; `recordDone` and the done-timeout path both close correctly. Suggested: `self.closeConnection()` in the post-done success branch of `handleTransportFailure` immediately before `resumeFinishWaiters(.success(assembled))`.
+
+- **`append` debug assert can fire on `.failed` / `.cancelled` the pump cannot avoid** (`Sources/Fluid/Services/GrokSTT/GrokSTTWebSocketSession.swift`). GROK-STT-DESIGN only calls append-after-`finish`/`cancel` illegal. The pump's inner frame-drain loop does not re-check `isRunning` / `Task.isCancelled` / `transportError`. A receive-loop `fail()` or MainActor `cancelStreamingSession` between the outer check and an `append` hits `assertionFailure` in Debug. Suggested: re-check those gates inside the inner frame loop, and leave `.failed` a quiet no-op.
