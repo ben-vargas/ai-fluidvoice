@@ -45,3 +45,15 @@ No leftover minors. The GrokSTTError.server payload item was filed as blocking a
 ### Claude
 
 - **GrokSTTError.server retains the unsanitized server message in its payload** (`Sources/Fluid/Services/GrokSTT/GrokSTTError.swift`). Filed as minor here and as blocking by Codex. Fixed in this round: server messages are sanitized before storage, and `String(describing:)` / `String(reflecting:)` no longer dump the raw associated value.
+
+## PR2 review round 2
+
+### Codex
+
+No leftover minors. The three blocking/major items (unsanitized `.server` associated value, 401 recovery scoring expired entries, local-engine `selectedSpeechModel` credential I/O) were filed as blocking/major and fixed in this round.
+
+### Claude
+
+- **`isGrokSTTSelectable()` default arguments are still evaluated eagerly when the function is called** (`Sources/Fluid/Persistence/SettingsStore.swift`). Round-2 fixed `selectedSpeechModel` so local-engine reads never call this function (parse stored model first; `resolvedSpeechModel` takes `@autoclosure` and only invokes the gate for `.grokSTT`). Remaining: a direct `isGrokSTTSelectable()` call still evaluates `credentialSourceConfigured: Bool = grokSTTCredentialSourceConfigured` at the call site, including SwiftUI view-body sites (`AISettingsView+SpeechRecognition.swift` speechModelSubtitle / grokSTTActivateHint / grokCLISessionStatusText). Suggested: `@autoclosure () -> Bool` on that parameter, and cache the credential-source answer for view bodies.
+
+- **`GrokCLIRefreshDelegate` never releases the retained child Process after it exits** (`Sources/Fluid/Services/GrokSTT/GrokCLIRefreshDelegate.swift`). `retainedProcess` is overwritten on the next refresh rather than cleared after `waitUntilExit()`, so this is a bounded one-object leak. Suggested: `self.lock.withLock { self.retainedProcess = nil }` after the wait returns.
