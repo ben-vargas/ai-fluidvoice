@@ -32,6 +32,15 @@ final class TestCounter: @unchecked Sendable {
     func increment() {
         self.lock.withLock { self.value += 1 }
     }
+
+    @discardableResult
+    func incrementAndGet() -> Int {
+        self.lock.withLock {
+            self.value += 1
+            return self.value
+        }
+    }
+
     var count: Int {
         self.lock.withLock { self.value }
     }

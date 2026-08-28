@@ -12,10 +12,12 @@ final class GrokSTTRetryStoreTests: XCTestCase {
         XCTAssertEqual(pending?.samples.count, 2)
         XCTAssertEqual(pending?.error, .offline)
         XCTAssertEqual(pending?.languageCode, "en")
+        XCTAssertEqual(pending?.keyterms, [])
         XCTAssertFalse(store.hasPending)
         XCTAssertNil(store.consume())
 
-        store.retain(samples: [1], error: .timeout, languageCode: nil)
+        store.retain(samples: [1], error: .timeout, languageCode: nil, keyterms: ["FluidVoice"])
+        XCTAssertEqual(store.pending?.keyterms, ["FluidVoice"])
         store.clear()
         XCTAssertFalse(store.hasPending)
     }

@@ -13,6 +13,7 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     private let socketTransport: any GrokSTTWebSocketTransporting
     private let cliSocketEnabled: Bool
     private let lock = NSLock()
+    private var restKeyterms: [String] = []
 
     #if DEBUG
     private var sessionFactory: ((StreamingSTTSessionConfiguration) throws -> StreamingTranscriptionSession)?
@@ -93,16 +94,25 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     }
 
     nonisolated func transcribeFinal(_ samples: [Float], languageCode: String?) async throws -> ASRTranscriptionResult {
-        try await Task.detached { [samples, languageCode] in
+        try await self.transcribeFinal(samples, languageCode: languageCode, keyterms: nil)
+    }
+
+    nonisolated func transcribeFinal(
+        _ samples: [Float],
+        languageCode: String?,
+        keyterms: [String]?
+    ) async throws -> ASRTranscriptionResult {
+        try await Task.detached { [samples, languageCode, keyterms] in
             #if DEBUG
             if let restFinalHandler = self.lock.withLock({ self.restFinalHandler }) {
                 return try await restFinalHandler(samples, languageCode)
             }
             #endif
+            let terms = keyterms ?? self.lock.withLock { self.restKeyterms }
             return try await self.restClient.transcribePCM(
                 samples,
                 languageCode: Self.wireLanguageCode(languageCode),
-                keyterms: []
+                keyterms: terms
             )
         }.value
     }
@@ -130,6 +140,7 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     func makeStreamingSession(
         configuration: StreamingSTTSessionConfiguration
     ) throws -> StreamingTranscriptionSession {
+        self.lock.withLock { self.restKeyterms = configuration.keyterms }
         #if DEBUG
         if let factory = self.lock.withLock({ self.sessionFactory }) {
             return try factory(configuration)

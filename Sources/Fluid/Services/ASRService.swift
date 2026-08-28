@@ -290,6 +290,7 @@ final class ASRService: ObservableObject {
     private var retryGrokProvider: GrokSTTProvider?
     private var isSessionDictation = false
     private var lastGrokLanguageCode: String?
+    private var lastGrokKeyterms: [String] = []
     /// Originating Grok recording is still being finalized. Reset must not steal this owner.
     private var sessionOwnerLive = false
     private var sessionOwnerGeneration: UInt64 = 0
@@ -4838,6 +4839,7 @@ final class ASRService: ObservableObject {
         self.isSessionDictation = true
         self.sessionOwnerLive = true
         self.lastGrokLanguageCode = SettingsStore.shared.selectedGrokSTTLanguageCode
+        self.lastGrokKeyterms = GrokSTTKeytermBuilder.terms()
         self.sessionGrokProvider = self.transcriptionProvider as? GrokSTTProvider
         self.sessionGeneration &+= 1
         let generation = self.sessionGeneration
@@ -4857,7 +4859,7 @@ final class ASRService: ObservableObject {
         let configuration = StreamingSTTSessionConfiguration(
             sampleRate: GrokSTTAudioConverter.sampleRate,
             languageCode: self.lastGrokLanguageCode,
-            keyterms: GrokSTTKeytermBuilder.terms(),
+            keyterms: self.lastGrokKeyterms,
             interimResults: true
         )
 
@@ -5059,8 +5061,13 @@ final class ASRService: ObservableObject {
         }
         do {
             let languageCode = self.lastGrokLanguageCode
+            let keyterms = self.lastGrokKeyterms
             let result = try await self.transcriptionExecutor.run { [provider] in
-                try await provider.transcribeFinal(capturedPCM, languageCode: languageCode)
+                try await provider.transcribeFinal(
+                    capturedPCM,
+                    languageCode: languageCode,
+                    keyterms: keyterms
+                )
             }
             let outputText = ASRService.applySpokenPunctuationFormatting(
                 ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
@@ -5169,12 +5176,14 @@ final class ASRService: ObservableObject {
         samples: [Float],
         error: GrokSTTError,
         languageCode: String? = nil,
+        keyterms: [String]? = nil,
         provider: GrokSTTProvider?
     ) {
         self.grokRetryStore.retain(
             samples: samples,
             error: error,
-            languageCode: languageCode ?? self.lastGrokLanguageCode
+            languageCode: languageCode ?? self.lastGrokLanguageCode,
+            keyterms: keyterms ?? self.lastGrokKeyterms
         )
         if let provider {
             self.retryGrokProvider = provider
@@ -5299,7 +5308,8 @@ final class ASRService: ObservableObject {
             self.grokRetryStore.retain(
                 samples: pending.samples,
                 error: pending.error,
-                languageCode: pending.languageCode
+                languageCode: pending.languageCode,
+                keyterms: pending.keyterms
             )
             return ""
         }
@@ -5313,8 +5323,13 @@ final class ASRService: ObservableObject {
         }
         do {
             let languageCode = pending.languageCode
+            let keyterms = pending.keyterms
             let result = try await self.transcriptionExecutor.run { [provider] in
-                try await provider.transcribeFinal(pending.samples, languageCode: languageCode)
+                try await provider.transcribeFinal(
+                    pending.samples,
+                    languageCode: languageCode,
+                    keyterms: keyterms
+                )
             }
             let outputText = ASRService.applySpokenPunctuationFormatting(
                 ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
@@ -5324,6 +5339,7 @@ final class ASRService: ObservableObject {
                     samples: pending.samples,
                     error: .emptyTranscript,
                     languageCode: pending.languageCode,
+                    keyterms: pending.keyterms,
                     provider: provider
                 )
                 self.surfaceGrokError(.emptyTranscript)
@@ -5340,6 +5356,7 @@ final class ASRService: ObservableObject {
                 samples: pending.samples,
                 error: grokError,
                 languageCode: pending.languageCode,
+                keyterms: pending.keyterms,
                 provider: provider
             )
             self.surfaceGrokError(grokError)

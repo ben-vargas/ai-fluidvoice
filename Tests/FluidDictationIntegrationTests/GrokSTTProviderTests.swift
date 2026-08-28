@@ -57,6 +57,31 @@ final class GrokSTTProviderTests: XCTestCase {
         XCTAssertEqual(http.requests.count, 1)
     }
 
+    func testTranscribeFinalIncludesSessionKeyterms() async throws {
+        let http = FakeGrokSTTHTTPClient()
+        http.enqueue(status: 200, json: ["text": "rest-with-terms"])
+        let resolver = StubGrokSTTResolver()
+        let provider = GrokSTTProvider(
+            resolver: resolver,
+            restClient: GrokSTTRESTClient(resolver: resolver, http: http)
+        )
+        _ = try provider.makeStreamingSession(
+            configuration: StreamingSTTSessionConfiguration(
+                sampleRate: 16_000,
+                languageCode: nil,
+                keyterms: ["FluidVoice", "Grok"],
+                interimResults: true
+            )
+        )
+        let result = try await provider.transcribeFinal([0.25, 0.5])
+        XCTAssertEqual(result.text, "rest-with-terms")
+        XCTAssertEqual(http.requests.count, 1)
+        let body = String(decoding: http.requests[0].httpBody ?? Data(), as: UTF8.self)
+        XCTAssertTrue(body.contains("name=\"keyterm\""))
+        XCTAssertTrue(body.contains("FluidVoice"))
+        XCTAssertTrue(body.contains("Grok"))
+    }
+
     func testWireLanguageCodeOmitsAutoAndMapsTl() {
         XCTAssertNil(GrokSTTProvider.wireLanguageCode(nil))
         XCTAssertNil(GrokSTTProvider.wireLanguageCode("auto"))

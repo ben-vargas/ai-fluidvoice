@@ -280,4 +280,159 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
             XCTAssertEqual(text, "off-main")
         }.value
     }
+
+    func testFinishAfterCreatedBudgetStillSendsAudioDone() async throws {
+        let transport = FakeGrokSTTWebSocketTransport()
+        let connection = FakeGrokSTTWebSocketConnection()
+        transport.enqueueConnection(connection)
+        let session = GrokSTTWebSocketSession(
+            configuration: .grokDictation,
+            resolver: RecordingGrokSTTResolver(),
+            transport: transport
+        )
+        let start = Task.detached { try await session.start() }
+        await grokSTTAssertEventually { transport.connections.count == 1 }
+        connection.emitJSON(["type": "transcript.created"])
+        try await start.value
+        connection.emitJSON(["type": "transcript.partial", "start": 0, "text": "long-hold"])
+        session.debugBackdateConnectStart(by: GrokSTTWebSocketSession.createdBudget + 5)
+
+        let finish = Task.detached { try await session.finish() }
+        await grokSTTAssertEventually { connection.sentText.contains { $0.contains("audio.done") } }
+        connection.emitJSON(["type": "transcript.done", "text": "long-hold"])
+        let text = try await finish.value
+        XCTAssertEqual(text, "long-hold")
+        XCTAssertTrue(session.debugAudioDoneSent)
+        XCTAssertNotEqual(session.currentState, .failed)
+    }
+
+    func testDropDuringAudioDoneSendIsPreDone() async throws {
+        let transport = FakeGrokSTTWebSocketTransport()
+        let connection = FakeGrokSTTWebSocketConnection()
+        transport.enqueueConnection(connection)
+        let sendStarted = TestGate()
+        let sendHold = TestGate()
+        connection.setSendTextHook {
+            sendStarted.signal()
+            await sendHold.wait()
+        }
+        let session = GrokSTTWebSocketSession(
+            configuration: .grokDictation,
+            resolver: RecordingGrokSTTResolver(),
+            transport: transport
+        )
+        let start = Task.detached { try await session.start() }
+        await grokSTTAssertEventually { transport.connections.count == 1 }
+        connection.emitJSON(["type": "transcript.created"])
+        try await start.value
+        connection.emitJSON(["type": "transcript.partial", "start": 0, "text": "must-not-insert"])
+
+        let finish = Task.detached { try await session.finish() }
+        await sendStarted.wait()
+        XCTAssertFalse(session.debugAudioDoneSent)
+        connection.emitError(GrokSTTError.socketClosed(code: 1006))
+        await grokSTTAssertEventually { session.transportError != nil }
+        sendHold.signal()
+
+        do {
+            _ = try await finish.value
+            XCTFail("drop before audio.done send must throw")
+        } catch {
+            XCTAssertEqual(error as? GrokSTTError, .socketClosed(code: 1006))
+        }
+        XCTAssertFalse(session.debugAudioDoneSent)
+        XCTAssertEqual(session.transcript, "must-not-insert")
+    }
+
+    func testSerializedSenderSendsFramesBeforeAudioDone() async throws {
+        let transport = FakeGrokSTTWebSocketTransport()
+        let connection = FakeGrokSTTWebSocketConnection()
+        transport.enqueueConnection(connection)
+        let firstStarted = TestGate()
+        let firstHold = TestGate()
+        let sendCount = TestCounter()
+        connection.setSendDataHook {
+            let n = sendCount.incrementAndGet()
+            if n == 1 {
+                firstStarted.signal()
+                await firstHold.wait()
+            }
+        }
+        let session = GrokSTTWebSocketSession(
+            configuration: .grokDictation,
+            resolver: RecordingGrokSTTResolver(),
+            transport: transport
+        )
+        let start = Task.detached { try await session.start() }
+        await grokSTTAssertEventually { transport.connections.count == 1 }
+        connection.emitJSON(["type": "transcript.created"])
+        try await start.value
+
+        let frameA = Data(repeating: 1, count: 8)
+        let frameB = Data(repeating: 2, count: 8)
+        session.append(pcm16: frameA)
+        await firstStarted.wait()
+        session.append(pcm16: frameB)
+        connection.emitJSON(["type": "transcript.partial", "start": 0, "text": "ordered"])
+
+        let finish = Task.detached { try await session.finish() }
+        await grokSTTAssertEventually { session.queuedAudioFrameCount >= 1 }
+        firstHold.signal()
+        await grokSTTAssertEventually { connection.sentText.contains { $0.contains("audio.done") } }
+        connection.emitJSON(["type": "transcript.done", "text": "ordered"])
+        let text = try await finish.value
+        XCTAssertEqual(text, "ordered")
+        XCTAssertEqual(connection.sentBinary, [frameA, frameB])
+        XCTAssertEqual(connection.sentText.filter { $0.contains("audio.done") }.count, 1)
+        XCTAssertTrue(session.debugAudioDoneSent)
+    }
+
+    func testEmptyDoneTimeoutClosesAndThrows() async throws {
+        let transport = FakeGrokSTTWebSocketTransport()
+        let connection = FakeGrokSTTWebSocketConnection()
+        transport.enqueueConnection(connection)
+        let session = GrokSTTWebSocketSession(
+            configuration: .grokDictation,
+            resolver: RecordingGrokSTTResolver(),
+            transport: transport,
+            doneTimeout: 0.15
+        )
+        let start = Task.detached { try await session.start() }
+        await grokSTTAssertEventually { transport.connections.count == 1 }
+        connection.emitJSON(["type": "transcript.created"])
+        try await start.value
+
+        do {
+            _ = try await Task.detached { try await session.finish() }.value
+            XCTFail("empty done-timeout must throw")
+        } catch {
+            XCTAssertEqual(error as? GrokSTTError, .timeout)
+        }
+        XCTAssertTrue(connection.closed)
+        XCTAssertTrue(session.debugAudioDoneSent)
+        XCTAssertEqual(session.currentState, .failed)
+    }
+
+    func testPartialDoneTimeoutSucceedsAndCloses() async throws {
+        let transport = FakeGrokSTTWebSocketTransport()
+        let connection = FakeGrokSTTWebSocketConnection()
+        transport.enqueueConnection(connection)
+        let session = GrokSTTWebSocketSession(
+            configuration: .grokDictation,
+            resolver: RecordingGrokSTTResolver(),
+            transport: transport,
+            doneTimeout: 0.15
+        )
+        let start = Task.detached { try await session.start() }
+        await grokSTTAssertEventually { transport.connections.count == 1 }
+        connection.emitJSON(["type": "transcript.created"])
+        try await start.value
+        connection.emitJSON(["type": "transcript.partial", "start": 0, "text": "kept-on-timeout"])
+
+        let text = try await Task.detached { try await session.finish() }.value
+        XCTAssertEqual(text, "kept-on-timeout")
+        XCTAssertTrue(connection.closed)
+        XCTAssertTrue(session.debugAudioDoneSent)
+        XCTAssertEqual(session.currentState, .complete)
+    }
 }

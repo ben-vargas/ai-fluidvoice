@@ -6,16 +6,36 @@ final class FakeGrokSTTWebSocketConnection: GrokSTTWebSocketConnection, @uncheck
     private let lock = NSLock()
     private var incoming: [Result<GrokSTTWebSocketMessage, Error>] = []
     private var waiters: [CheckedContinuation<GrokSTTWebSocketMessage, Error>] = []
+    private var sendDataHook: (@Sendable () async -> Void)?
+    private var sendTextHook: (@Sendable () async -> Void)?
     private(set) var sentBinary: [Data] = []
     private(set) var sentText: [String] = []
     private(set) var closed = false
 
+    func setSendDataHook(_ hook: (@Sendable () async -> Void)?) {
+        self.lock.withLock { self.sendDataHook = hook }
+    }
+
+    func setSendTextHook(_ hook: (@Sendable () async -> Void)?) {
+        self.lock.withLock { self.sendTextHook = hook }
+    }
+
     func send(data: Data) async throws {
-        self.lock.withLock { self.sentBinary.append(data) }
+        let hook = self.lock.withLock { self.sendDataHook }
+        if let hook { await hook() }
+        try self.lock.withLock { () -> Void in
+            if self.closed { throw GrokSTTError.cancelled }
+            self.sentBinary.append(data)
+        }
     }
 
     func send(text: String) async throws {
-        self.lock.withLock { self.sentText.append(text) }
+        let hook = self.lock.withLock { self.sendTextHook }
+        if let hook { await hook() }
+        try self.lock.withLock { () -> Void in
+            if self.closed { throw GrokSTTError.cancelled }
+            self.sentText.append(text)
+        }
     }
 
     func receive() async throws -> GrokSTTWebSocketMessage {
@@ -178,6 +198,34 @@ func grokSTTWaitUntil(timeout: TimeInterval = 1, predicate: @escaping () -> Bool
         try? await Task.sleep(nanoseconds: 10_000_000)
     }
     return predicate()
+}
+
+final class TestGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var isOpen = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            self.lock.lock()
+            if self.isOpen {
+                self.lock.unlock()
+                continuation.resume()
+                return
+            }
+            self.waiters.append(continuation)
+            self.lock.unlock()
+        }
+    }
+
+    func signal() {
+        self.lock.lock()
+        self.isOpen = true
+        let waiters = self.waiters
+        self.waiters = []
+        self.lock.unlock()
+        waiters.forEach { $0.resume() }
+    }
 }
 
 func grokSTTAssertEventually(

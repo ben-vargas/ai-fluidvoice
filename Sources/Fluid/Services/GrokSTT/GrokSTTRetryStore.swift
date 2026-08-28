@@ -13,6 +13,7 @@ final class GrokSTTRetryStore {
         let createdAt: Date
         let error: GrokSTTError
         let languageCode: String?
+        let keyterms: [String]
     }
 
     private(set) var pending: Pending?
@@ -27,7 +28,7 @@ final class GrokSTTRetryStore {
         return self.now().timeIntervalSince(pending.createdAt) < Self.ttl
     }
 
-    func retain(samples: [Float], error: GrokSTTError, languageCode: String?) {
+    func retain(samples: [Float], error: GrokSTTError, languageCode: String?, keyterms: [String] = []) {
         let maxSamples = Self.sampleRate * Int(Self.maxDuration)
         let truncated = samples.count > maxSamples ? Array(samples.prefix(maxSamples)) : samples
         self.pending = Pending(
@@ -36,7 +37,8 @@ final class GrokSTTRetryStore {
             sampleRate: Self.sampleRate,
             createdAt: self.now(),
             error: error,
-            languageCode: languageCode
+            languageCode: languageCode,
+            keyterms: keyterms
         )
     }
 
