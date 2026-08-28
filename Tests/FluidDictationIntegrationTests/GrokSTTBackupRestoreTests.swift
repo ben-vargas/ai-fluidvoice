@@ -28,6 +28,7 @@ final class GrokSTTBackupRestoreTests: XCTestCase {
         var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
         object.removeValue(forKey: "selectedGrokSTTLanguageCode")
         object.removeValue(forKey: "grokCLIBinaryPath")
+        object.removeValue(forKey: "grokSTTAuthMode")
         let stripped = try JSONSerialization.data(withJSONObject: object)
 
         let decoder = JSONDecoder()
@@ -36,10 +37,19 @@ final class GrokSTTBackupRestoreTests: XCTestCase {
 
         XCTAssertNil(decoded.selectedGrokSTTLanguageCode)
         XCTAssertNil(decoded.grokCLIBinaryPath)
+        XCTAssertNil(decoded.grokSTTAuthMode)
         XCTAssertEqual(decoded.selectedSpeechModel, payload.selectedSpeechModel)
     }
 
-    func testRestoringGrokSTTWhileCatalogHiddenFallsBackToDefaultModel() {
+    func testRestoringGrokSTTWithoutCredentialSourceFallsBackToDefaultModel() {
+        XCTAssertTrue(SettingsStore.SpeechModel.grokSTTCatalogVisible)
+        XCTAssertFalse(
+            SettingsStore.SpeechModel.isGrokSTTSelectable(
+                catalogVisible: true,
+                credentialSourceConfigured: false
+            )
+        )
+
         let defaults = UserDefaults.standard
         let previous = defaults.string(forKey: self.selectedSpeechModelKey)
         defer {
@@ -52,9 +62,11 @@ final class GrokSTTBackupRestoreTests: XCTestCase {
 
         defaults.set(SettingsStore.SpeechModel.grokSTT.rawValue, forKey: self.selectedSpeechModelKey)
 
-        XCTAssertEqual(SettingsStore.shared.selectedSpeechModel, SettingsStore.SpeechModel.defaultModel)
-        XCTAssertNotEqual(SettingsStore.shared.selectedSpeechModel, .grokSTT)
-        XCTAssertFalse(SettingsStore.SpeechModel.grokSTTCatalogVisible)
-        XCTAssertFalse(SettingsStore.SpeechModel.grokSTTCredentialSourceConfigured)
+        if SettingsStore.SpeechModel.grokSTTCredentialSourceConfigured {
+            XCTAssertEqual(SettingsStore.shared.selectedSpeechModel, .grokSTT)
+        } else {
+            XCTAssertEqual(SettingsStore.shared.selectedSpeechModel, SettingsStore.SpeechModel.defaultModel)
+            XCTAssertNotEqual(SettingsStore.shared.selectedSpeechModel, .grokSTT)
+        }
     }
 }

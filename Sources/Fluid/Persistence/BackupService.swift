@@ -20,6 +20,7 @@ struct SettingsBackupPayload: Codable, Equatable {
     let selectedWhisperLanguageCode: String?
     let selectedGrokSTTLanguageCode: String?
     let grokCLIBinaryPath: String?
+    let grokSTTAuthMode: String?
     let selectedCohereLanguage: SettingsStore.CohereLanguage
     let selectedNemotronLanguage: SettingsStore.NemotronLanguage?
     let selectedAppleSpeechLocaleIdentifier: String?

@@ -16,6 +16,8 @@ final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
     private static let automaticWhisperLanguageCode = "auto"
     private static let automaticGrokSTTLanguageCode = "auto"
+    nonisolated static let grokSTTAuthModeDefaultsKey = "GrokSTTAuthMode"
+    nonisolated static let grokCLIBinaryPathDefaultsKey = "GrokCLIBinaryPath"
     static let transcriptionPreviewCharLimitRange: ClosedRange<Int> = 50...800
     static let transcriptionPreviewCharLimitStep = 50
     static let defaultTranscriptionPreviewCharLimit = 150
@@ -3239,6 +3241,7 @@ final class SettingsStore: ObservableObject {
             selectedWhisperLanguageCode: Self.whisperLanguageBackupValue(for: self.selectedWhisperLanguageCode),
             selectedGrokSTTLanguageCode: Self.grokSTTLanguageBackupValue(for: self.selectedGrokSTTLanguageCode),
             grokCLIBinaryPath: self.grokCLIBinaryPath,
+            grokSTTAuthMode: self.grokSTTAuthMode.rawValue,
             selectedCohereLanguage: self.selectedCohereLanguage,
             selectedNemotronLanguage: self.selectedNemotronLanguage,
             selectedAppleSpeechLocaleIdentifier: self.selectedAppleSpeechLocaleIdentifier,
@@ -3369,6 +3372,9 @@ final class SettingsStore: ObservableObject {
         }
         if let grokCLIBinaryPath = payload.grokCLIBinaryPath {
             self.grokCLIBinaryPath = grokCLIBinaryPath
+        }
+        if let grokSTTAuthMode = payload.grokSTTAuthMode {
+            self.grokSTTAuthMode = Self.grokSTTAuthMode(fromStoredValue: grokSTTAuthMode)
         }
         self.selectedCohereLanguage = payload.selectedCohereLanguage
         if let selectedNemotronLanguage = payload.selectedNemotronLanguage {
@@ -4568,13 +4574,15 @@ final class SettingsStore: ObservableObject {
         /// Flip to `true` in a future round to re-enable Qwen without deleting implementation.
         static let qwenPreviewEnabled = false
 
-        /// PR1 hides the Grok Speech card. PR2 shows it; Activate stays off until PR3b.
-        static let grokSTTCatalogVisible = false
+        /// PR2 shows the Grok Speech card. Activate stays off until PR3b wires the socket.
+        static let grokSTTCatalogVisible = true
         /// Flip to `true` in PR3b once the real WebSocket session is wired.
         static let grokSTTActivateEnabled = false
 
-        /// PR1 has no credential plumbing. PR2 wires Keychain + the read-only CLI store.
-        static var grokSTTCredentialSourceConfigured: Bool { false }
+        /// True when an STT API key exists or the CLI store is readable with a `key` field.
+        static var grokSTTCredentialSourceConfigured: Bool {
+            GrokSTTCredentialResolver.shared.isSourceConfigured
+        }
 
         static func isGrokSTTSelectable(
             catalogVisible: Bool = grokSTTCatalogVisible,
@@ -5529,7 +5537,8 @@ private extension SettingsStore {
         static let selectedSpeechModel = "SelectedSpeechModel"
         static let selectedWhisperLanguageCode = "SelectedWhisperLanguageCode"
         static let selectedGrokSTTLanguageCode = "SelectedGrokSTTLanguageCode"
-        static let grokCLIBinaryPath = "GrokCLIBinaryPath"
+        static let grokCLIBinaryPath = SettingsStore.grokCLIBinaryPathDefaultsKey
+        static let grokSTTAuthMode = SettingsStore.grokSTTAuthModeDefaultsKey
         static let selectedCohereLanguage = "SelectedCohereLanguage"
         static let selectedNemotronLanguage = "SelectedNemotronLanguage"
         static let selectedAppleSpeechLocaleIdentifier = "SelectedAppleSpeechLocaleIdentifier"
@@ -5916,6 +5925,24 @@ extension SettingsStore {
                 self.defaults.removeObject(forKey: Keys.grokCLIBinaryPath)
             }
         }
+    }
+
+    /// Explicit STT billing mode. Default is the documented API-key path. Errors never switch this.
+    var grokSTTAuthMode: GrokSTTAuthMode {
+        get {
+            Self.grokSTTAuthMode(fromStoredValue: self.defaults.string(forKey: Keys.grokSTTAuthMode))
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue.rawValue, forKey: Keys.grokSTTAuthMode)
+        }
+    }
+
+    nonisolated static func grokSTTAuthMode(fromStoredValue value: String?) -> GrokSTTAuthMode {
+        if let value, let mode = GrokSTTAuthMode(rawValue: value) {
+            return mode
+        }
+        return .apiKey
     }
 
     static func grokSTTLanguageCode(fromStoredValue value: String?) -> String? {

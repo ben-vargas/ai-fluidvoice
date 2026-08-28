@@ -7,6 +7,9 @@ struct VoiceEngineSettingsView: View {
     @State var isShowingNemotronLanguagePicker = false
     @State var isShowingWhisperLanguagePicker = false
     @State var whisperLanguageSearchText = ""
+    @State var grokSTTAPIKeyDraft = ""
+    @State var grokCLIBinaryPathDraft = ""
+    @State var grokSTTCredentialStatus = ""
     let theme: AppTheme
 
     var voiceEngineTitleText: Color {
@@ -23,9 +26,17 @@ struct VoiceEngineSettingsView: View {
 
     var body: some View {
         self.speechRecognitionCard
-            .onAppear { self.viewModel.onAppear() }
+            .onAppear {
+                self.viewModel.onAppear()
+                self.reloadGrokSTTCredentialDrafts()
+            }
             .onChange(of: self.settings.selectedSpeechModel) { _, newValue in
                 self.viewModel.handleSelectedSpeechModelChange(newValue)
+            }
+            .onChange(of: self.viewModel.previewSpeechModel) { _, newValue in
+                if newValue == .grokSTT {
+                    self.reloadGrokSTTCredentialDrafts()
+                }
             }
     }
 }

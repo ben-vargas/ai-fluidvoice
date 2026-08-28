@@ -21,8 +21,9 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
         XCTAssertEqual(model.brandName, "xAI")
         XCTAssertFalse(GrokSTTCatalogStubProvider().modelsExistOnDisk())
         XCTAssertFalse(model.canActivateVoiceEngine)
-        XCTAssertFalse(SettingsStore.SpeechModel.grokSTTCatalogVisible)
-        XCTAssertFalse(SettingsStore.SpeechModel.availableModels.contains(.grokSTT))
+        XCTAssertTrue(SettingsStore.SpeechModel.grokSTTCatalogVisible)
+        XCTAssertFalse(SettingsStore.SpeechModel.grokSTTActivateEnabled)
+        XCTAssertTrue(SettingsStore.SpeechModel.availableModels.contains(.grokSTT))
     }
 
     func testGrokSTTSettingsCardShowsNeitherDownloadNorDelete() {
@@ -40,13 +41,13 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
         XCTAssertEqual(descriptor.model, "grok-stt")
     }
 
-    func testSpeechProviderFilterHidesXAIWhileCatalogHidden() {
-        XCTAssertFalse(SettingsStore.SpeechModel.grokSTTCatalogVisible)
+    func testSpeechProviderFilterShowsXAIWhenCatalogVisible() {
+        XCTAssertTrue(SettingsStore.SpeechModel.grokSTTCatalogVisible)
         XCTAssertTrue(SpeechProviderFilter.allCases.contains(.xai))
-        XCTAssertFalse(SpeechProviderFilter.visibleCases.contains(.xai))
+        XCTAssertTrue(SpeechProviderFilter.visibleCases.contains(.xai))
         XCTAssertEqual(
             SpeechProviderFilter.visibleCases.map(\.rawValue),
-            ["All", "NVIDIA", "Apple", "Cohere", "OpenAI"]
+            ["All", "NVIDIA", "Apple", "Cohere", "OpenAI", "xAI"]
         )
     }
 
@@ -76,7 +77,10 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
     }
 
     func testGrokSTTIsNotSelectableWithoutCatalogAndCredential() {
-        XCTAssertFalse(SettingsStore.SpeechModel.isGrokSTTSelectable())
+        XCTAssertEqual(
+            SettingsStore.SpeechModel.isGrokSTTSelectable(),
+            SettingsStore.SpeechModel.grokSTTCredentialSourceConfigured
+        )
         XCTAssertFalse(
             SettingsStore.SpeechModel.isGrokSTTSelectable(
                 catalogVisible: true,

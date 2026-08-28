@@ -236,6 +236,10 @@ extension VoiceEngineSettingsView {
                         }
                     }
 
+                    if model == .grokSTT {
+                        self.grokSTTCredentialsPanel
+                    }
+
                     // Memory warning for large models
                     if let memoryWarning = model.memoryWarning {
                         HStack(spacing: 6) {
@@ -459,15 +463,23 @@ extension VoiceEngineSettingsView {
                             .background(Capsule().fill(Color.fluidGreen.opacity(0.25)))
                             .foregroundStyle(Color.fluidGreen)
                     } else {
-                        Button("Activate") {
-                            self.viewModel.activateSpeechModel(model)
+                        VStack(alignment: .trailing, spacing: 4) {
+                            Button("Activate") {
+                                self.viewModel.activateSpeechModel(model)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .tint(Color.fluidGreen)
+                            .fontWeight(.semibold)
+                            .shadow(color: Color.fluidGreen.opacity(0.35), radius: 4, x: 0, y: 1)
+                            .disabled(self.viewModel.areSpeechModelActionsBlocked || !model.canActivateVoiceEngine)
+
+                            if model == .grokSTT, !model.canActivateVoiceEngine {
+                                Text(self.grokSTTActivateHint)
+                                    .font(self.theme.typography.bodySmall)
+                                    .foregroundStyle(self.voiceEngineTertiaryText)
+                            }
                         }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .tint(Color.fluidGreen)
-                        .fontWeight(.semibold)
-                        .shadow(color: Color.fluidGreen.opacity(0.35), radius: 4, x: 0, y: 1)
-                        .disabled(self.viewModel.areSpeechModelActionsBlocked || !model.canActivateVoiceEngine)
                     }
 
                     if model.showsVoiceEngineDeleteAction {
@@ -759,8 +771,150 @@ extension VoiceEngineSettingsView {
         switch model {
         case .nemotronStreaming, .nemotronStreaming320:
             return "Nemotron Speech 3.5 - Streaming Capable"
+        case .grokSTT:
+            if !SettingsStore.SpeechModel.grokSTTCredentialSourceConfigured {
+                return "Grok Speech (xAI) · Needs credentials"
+            }
+            return "Grok Speech (xAI) · Not active"
         default:
             return model.displayName
+        }
+    }
+
+    private var grokSTTActivateHint: String {
+        if SettingsStore.SpeechModel.grokSTTCredentialSourceConfigured {
+            return "Not activatable yet"
+        }
+        return "Needs credentials"
+    }
+
+    var grokSTTCredentialsPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Speech credential")
+                .font(self.theme.typography.bodySmallStrong)
+                .foregroundStyle(self.voiceEngineTitleText)
+
+            Picker("Speech credential", selection: self.$settings.grokSTTAuthMode) {
+                Text("API key").tag(GrokSTTAuthMode.apiKey)
+                Text("Grok CLI session").tag(GrokSTTAuthMode.grokCLISession)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            switch self.settings.grokSTTAuthMode {
+            case .apiKey:
+                Text("API key (documented): billed at xAI’s published rates (streaming ~$0.20/hour, REST ~$0.10/hour as of 2026-08-27).")
+                    .font(self.theme.typography.bodySmall)
+                    .foregroundStyle(self.voiceEngineSecondaryText)
+                Text("This key is used only for speech-to-text. It is not the xAI key under AI Enhancement.")
+                    .font(self.theme.typography.bodySmall)
+                    .foregroundStyle(self.voiceEngineSecondaryText)
+
+                HStack(alignment: .center, spacing: 8) {
+                    SecureField("xAI STT API key", text: self.$grokSTTAPIKeyDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 13, design: .monospaced))
+                    Button("Save") {
+                        self.saveGrokSTTAPIKeyDraft()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(self.grokSTTAPIKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if self.viewModel.hasSavedGrokSTTAPIKey() {
+                        Button("Delete") {
+                            self.deleteGrokSTTAPIKey()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                }
+            case .grokCLISession:
+                Text(
+                    "Grok CLI session (experimental, undocumented): uses a read-only ~/.grok/auth.json. " +
+                        "xAI does not publish that this token is valid for STT; it may stop working. " +
+                        "Billing/quota for this path is unknown. FluidVoice never writes that file."
+                )
+                .font(self.theme.typography.bodySmall)
+                .foregroundStyle(self.voiceEngineSecondaryText)
+                Text(self.grokCLISessionStatusText)
+                    .font(self.theme.typography.bodySmall)
+                    .foregroundStyle(self.voiceEngineSecondaryText)
+
+                HStack(alignment: .center, spacing: 8) {
+                    TextField("grok CLI path (optional)", text: self.$grokCLIBinaryPathDraft)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 13, design: .monospaced))
+                    Button("Save") {
+                        self.settings.grokCLIBinaryPath = self.grokCLIBinaryPathDraft
+                        self.grokSTTCredentialStatus = "Saved grok CLI path."
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    Button("Clear") {
+                        self.grokCLIBinaryPathDraft = ""
+                        self.settings.grokCLIBinaryPath = nil
+                        self.grokSTTCredentialStatus = "Cleared grok CLI path."
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(self.settings.grokCLIBinaryPath == nil && self.grokCLIBinaryPathDraft.isEmpty)
+                }
+            }
+
+            Text("xAI’s docs tell developers to proxy WebSockets and not put keys in clients. FluidVoice presents your key or your CLI token from this Mac app. Do not paste a team-shared key.")
+                .font(self.theme.typography.bodySmall)
+                .foregroundStyle(self.voiceEngineSecondaryText)
+
+            if !self.grokSTTCredentialStatus.isEmpty {
+                Text(self.grokSTTCredentialStatus)
+                    .font(self.theme.typography.bodySmall)
+                    .foregroundStyle(self.theme.palette.accent)
+            }
+        }
+        .padding(.top, 4)
+    }
+
+    private var grokCLISessionStatusText: String {
+        switch GrokCLIAuthStore().sessionStatus() {
+        case .missing:
+            return "No Grok CLI session found."
+        case .unreadable:
+            return "Couldn't read the Grok CLI session store."
+        case .parseFailed:
+            return "The Grok CLI session store is unreadable."
+        case .empty:
+            return "The Grok CLI session store has no usable session."
+        case let .available(email, expired):
+            let who = email ?? "signed-in account"
+            if expired {
+                return "Session for \(who) is expired — open Grok Build once."
+            }
+            return "Session found for \(who)."
+        }
+    }
+
+    func reloadGrokSTTCredentialDrafts() {
+        self.grokSTTAPIKeyDraft = (try? GrokSTTKeychain.shared.loadAPIKey()) ?? ""
+        self.grokCLIBinaryPathDraft = self.settings.grokCLIBinaryPath ?? ""
+        self.grokSTTCredentialStatus = ""
+    }
+
+    private func saveGrokSTTAPIKeyDraft() {
+        do {
+            try self.viewModel.saveGrokSTTAPIKey(self.grokSTTAPIKeyDraft)
+            self.grokSTTCredentialStatus = "Saved speech-to-text API key."
+        } catch {
+            self.grokSTTCredentialStatus = error.localizedDescription
+        }
+    }
+
+    private func deleteGrokSTTAPIKey() {
+        do {
+            try self.viewModel.deleteGrokSTTAPIKey()
+            self.grokSTTAPIKeyDraft = ""
+            self.grokSTTCredentialStatus = "Deleted speech-to-text API key."
+        } catch {
+            self.grokSTTCredentialStatus = error.localizedDescription
         }
     }
 
