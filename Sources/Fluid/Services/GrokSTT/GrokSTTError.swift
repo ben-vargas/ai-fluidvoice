@@ -2,7 +2,7 @@ import Foundation
 
 /// Typed STT failures. Payloads never include Bearer tokens, `key`, cookies, or `auth.json` excerpts.
 /// `asNSError().userInfo` contains only `NSLocalizedDescriptionKey` so `ASRService.stop` logging is safe.
-nonisolated enum GrokSTTError: Error, LocalizedError, Equatable, Sendable {
+nonisolated enum GrokSTTError: Error, LocalizedError, CustomStringConvertible, CustomDebugStringConvertible, Equatable, Sendable {
     case noCredentialConfigured
     case grokCLINotFound
     case grokStoreUnreadable
@@ -98,12 +98,29 @@ nonisolated enum GrokSTTError: Error, LocalizedError, Equatable, Sendable {
         }
     }
 
+    var description: String {
+        self.errorDescription ?? "Speech-to-text failed."
+    }
+
+    var debugDescription: String {
+        switch self {
+        case let .server(status, _):
+            return "GrokSTTError.server(status: \(status), message: [redacted])"
+        case let .rateLimited(retryAfter):
+            return "GrokSTTError.rateLimited(retryAfter: \(String(describing: retryAfter)))"
+        case let .socketClosed(code):
+            return "GrokSTTError.socketClosed(code: \(code))"
+        default:
+            return "GrokSTTError(\(self.description))"
+        }
+    }
+
     /// Bridge for ASRService NSError logging. `userInfo` contains ONLY `NSLocalizedDescriptionKey`.
     func asNSError() -> NSError {
         NSError(
             domain: Self.nsErrorDomain,
             code: self.numericCode,
-            userInfo: [NSLocalizedDescriptionKey: self.errorDescription ?? "Speech-to-text failed."]
+            userInfo: [NSLocalizedDescriptionKey: self.description]
         )
     }
 
@@ -127,10 +144,7 @@ nonisolated enum GrokSTTError: Error, LocalizedError, Equatable, Sendable {
         case 429:
             return .rateLimited(retryAfter: retryAfter)
         default:
-            if (500...599).contains(status) {
-                return .server(status: status, message: message)
-            }
-            return .server(status: status, message: message)
+            return .server(status: status, message: Self.sanitizedMessage(message))
         }
     }
 
