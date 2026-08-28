@@ -201,3 +201,12 @@ nonisolated enum GrokSTTError: Error, LocalizedError, CustomStringConvertible, C
         #"[A-Za-z0-9_-]{40,}"#,
     ]
 }
+
+extension Error {
+    func asGrokSTTError() -> GrokSTTError {
+        if let grokError = self as? GrokSTTError {
+            return grokError
+        }
+        return .server(status: 500, message: GrokSTTSanitizedMessage(self.localizedDescription))
+    }
+}
