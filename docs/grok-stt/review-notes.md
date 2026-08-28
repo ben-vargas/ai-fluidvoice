@@ -361,3 +361,27 @@ Approved. No leftover minors.
   }
 ]
 ```
+
+## PR5 review round 1
+
+Blocking/major/specViolation items applied in this round:
+
+- **L1 empty-audio now requires a wire 4xx.** The live probe records the HTTP status and fails on 200 + `.emptyTranscript`, 5xx, and 401. A working API-key request is still required first so a 401 cannot be confused with “empty audio rejected.”
+- **L7 is no longer an unconditional skip claiming coverage.** The live test POSTs only when `GROK_STT_LIVE_FORBIDDEN_BEARER` is set and asserts HTTP 403, a single request, and no CLI alternate. Missing that token, or a non-403 response, is an explicit blocked/unrun skip. `test403DoesNotRetry` stays unit coverage only.
+- **L13 is a production-locator PATH-less probe**, not the in-memory filesystem stand-in. The unit test was renamed to `testBinaryLocatorFindsHomeGrokBinWhenPresent` (U11). The live probe uses `GrokCLIBinaryLocator` against the real disk with a nil override and checks the located binary with `/bin/test -x` under `PATH=""`, or the `grokCLINotFound` instruction. It does not spawn `grok`.
+- **`audio.done` → `transcript.done` ms starts at transmission.** `audioDoneAt` is set in the serialized sender immediately before `sendText`, after queued PCM frames have drained.
+- **Deleted overbuilt session log/state:** unused `createdAt`; per-partial `partial count=N` info line (aggregate `partials=N` remains on `transcript.done`); `#if !os(iOS)` wrapper on the macOS-only live probe file.
+
+### Minors (recorded, not blocking)
+
+### Codex
+
+No leftover minors. The audio.done queue-time metric was filed as minor here and as a spec-violation; it was fixed in this round.
+
+### Claude
+
+- **`GrokSTTLog.debug` writes dictated text and custom-dictionary keyterms to the always-on file log** (`Sources/Fluid/Services/GrokSTT/GrokSTTWebSocketSession.swift`). Also filed as a spec-violation. `DebugLogger.log()` (`DebugLogger.swift:86-99`) appends every level to `FileLogger` and stdout before `EnableDebugLogs`, so `.debug` partial text (truncated to 80) and the WebSocket URL (including `keyterm` query items) persist in `~/Library/Logs/Fluid/Fluid.log`. FeedbackView can upload the last 30 lines. GROK-STT-DESIGN asks for “partial counts (not text at debug-info in production; text only at debug level, truncated)” — the code meets that wording (counts at info, text at `.debug`, truncated). “Production” there contrasts log level, not Release configuration. `ASRService.swift:2669-2671` already logs the full final transcript at `.debug` for every local engine. Compiling `GrokSTTLog.debug` out of release would make Grok STT quieter than local ASR. Not changed. Suggested leftover: `#if DEBUG` around `GrokSTTLog.debug` if a later pass wants a Grok-only island.
+
+- **`GrokSTTLog.redact` inherits a 180-character hard truncation** (`Sources/Fluid/Services/GrokSTT/GrokSTTLog.swift`). `redact` delegates to `GrokSTTError.sanitizedMessage`, which caps at 180 characters (designed for untrusted server payloads). Applied to `describeRequest` the dump can lose the masked `Authorization` line and `(body omitted)` once a few `keyterm` query items push the URL past 180. Truncation only removes text (not a leak). Suggested: redact per line inside `describeRequest`, or give `GrokSTTLog` a redaction entry point without the 180-char cap.
+
+- **Non-empty guard in the LLMClient-reuse test is vacuous** (`Tests/FluidDictationIntegrationTests/GrokSTTLoggingRedactionTests.swift`). `files` is seeded with `StreamingTranscriptionSession.swift` before enumerating `Sources/Fluid/Services/GrokSTT`, so `XCTAssertFalse(files.isEmpty)` cannot fail. If the GrokSTT directory moved, the test would still pass after scanning one file. Suggested: assert on the enumerated GrokSTT set (`XCTAssertGreaterThan(grokFiles.count, 10)`) before merging `extra`.
