@@ -17,9 +17,6 @@ nonisolated enum GrokSTTCloudUploadCopy {
     static func localAPIErrorMessage(_ error: Error, isCloudEngine: Bool) -> String {
         let base = error.localizedDescription
         guard isCloudEngine else { return base }
-        if base.contains(self.localAPITranscribeNotice) {
-            return base
-        }
         return "\(base) \(self.localAPITranscribeNotice)"
     }
 }

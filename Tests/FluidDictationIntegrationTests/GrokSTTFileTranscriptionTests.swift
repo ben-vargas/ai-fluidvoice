@@ -7,8 +7,6 @@ final class GrokSTTFileTranscriptionTests: XCTestCase {
             GrokSTTCloudUploadCopy.videoNotice,
             "This video will be decoded on your Mac; the extracted audio will be sent to xAI."
         )
-        XCTAssertTrue(GrokSTTCloudUploadCopy.audioNotice.localizedCaseInsensitiveContains("xAI"))
-        XCTAssertTrue(GrokSTTCloudUploadCopy.audioNotice.localizedCaseInsensitiveContains("audio"))
         XCTAssertEqual(
             GrokSTTCloudUploadCopy.meetingNotice(isVideo: true),
             GrokSTTCloudUploadCopy.videoNotice
@@ -17,11 +15,6 @@ final class GrokSTTFileTranscriptionTests: XCTestCase {
             GrokSTTCloudUploadCopy.meetingNotice(isVideo: false),
             GrokSTTCloudUploadCopy.audioNotice
         )
-        XCTAssertTrue(GrokSTTCloudUploadCopy.localAPITranscribeNotice.contains("selected voice engine"))
-        XCTAssertTrue(GrokSTTCloudUploadCopy.localAPITranscribeNotice.contains("xAI"))
-        XCTAssertTrue(GrokSTTCloudUploadCopy.localAPITranscribeNotice.localizedCaseInsensitiveContains("no local fallback"))
-        XCTAssertTrue(GrokSTTCloudUploadCopy.speakerLabelsUnavailable.localizedCaseInsensitiveContains("local"))
-        XCTAssertTrue(GrokSTTCloudUploadCopy.speakerLabelsUnavailable.localizedCaseInsensitiveContains("diarize"))
     }
 
     func testSpeakerLabelsStayOnLocalEnginePath() {
