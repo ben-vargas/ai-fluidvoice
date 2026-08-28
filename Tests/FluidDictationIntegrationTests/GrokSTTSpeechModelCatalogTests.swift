@@ -23,6 +23,8 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTTCatalogVisible)
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTTActivateEnabled)
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTTCLISocketEnabled)
+        // L2 API-key WebSocket probe has not run; the unprobed path must stay off.
+        XCTAssertFalse(SettingsStore.SpeechModel.grokSTTAPIKeySocketEnabled)
         XCTAssertTrue(SettingsStore.SpeechModel.availableModels.contains(.grokSTT))
     }
 
@@ -98,11 +100,22 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
                 credentialSourceConfigured: true
             )
         )
+        // The default auth mode is .apiKey, whose socket is disabled until probe
+        // L2 runs — so all-gates-true is only selectable in CLI-session mode.
         XCTAssertTrue(
             SettingsStore.SpeechModel.isGrokSTTSelectable(
                 catalogVisible: true,
                 activateEnabled: true,
-                credentialSourceConfigured: true
+                credentialSourceConfigured: true,
+                authMode: .grokCLISession
+            )
+        )
+        XCTAssertFalse(
+            SettingsStore.SpeechModel.isGrokSTTSelectable(
+                catalogVisible: true,
+                activateEnabled: true,
+                credentialSourceConfigured: true,
+                authMode: .apiKey
             )
         )
         XCTAssertFalse(
@@ -127,7 +140,27 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
                 activateEnabled: true,
                 credentialSourceConfigured: true,
                 cliSocketEnabled: false,
+                apiKeySocketEnabled: true,
                 authMode: .apiKey
+            )
+        )
+        XCTAssertFalse(
+            SettingsStore.SpeechModel.isGrokSTTSelectable(
+                catalogVisible: true,
+                activateEnabled: true,
+                credentialSourceConfigured: true,
+                apiKeySocketEnabled: false,
+                authMode: .apiKey
+            )
+        )
+        XCTAssertTrue(
+            SettingsStore.SpeechModel.isGrokSTTSelectable(
+                catalogVisible: true,
+                activateEnabled: true,
+                credentialSourceConfigured: true,
+                cliSocketEnabled: true,
+                apiKeySocketEnabled: false,
+                authMode: .grokCLISession
             )
         )
     }

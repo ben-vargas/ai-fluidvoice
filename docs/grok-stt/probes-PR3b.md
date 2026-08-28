@@ -16,7 +16,7 @@ Tokens are not recorded here. `refresh_token` was not decoded. `~/.grok/auth.jso
 
 | ID | Case | Result | Evidence |
 |---|---|---|---|
-| **L2** | API-key WebSocket | **Skipped** | No API key available. Not faked. Same endpoint/protocol as L4. API-key socket still ships. |
+| **L2** | API-key WebSocket | **Skipped** | No API key available. Not faked. Same endpoint/protocol as L4. **API-key socket disabled** (`grokSTTAPIKeySocketEnabled = false`) until L2 actually runs. |
 | **L4** | CLI-token WebSocket | **Pass** | `transcript.created` (keys: `id`, `type`) then three `transcript.partial` (`is_final` false → true/`speech_final` false → true/`speech_final` true; textLen 19 each) then `transcript.done`. 200-class session, not 401. **CLI-socket enabled.** |
 | **L5** | Wait-for-created | **Pass** | First server event was `transcript.created`. Client sent no audio before that event. |
 | **L8** | Offline / unreachable | **Pass** | `wss://192.0.2.1/v1/stt` failed (`unreachable error`, ~3 s). Maps to `.offline` in `GrokSTTTransportErrorMapper`. |
@@ -25,7 +25,7 @@ Tokens are not recorded here. `refresh_token` was not decoded. `~/.grok/auth.jso
 
 ## Gate
 
-L4 passed → **CLI-socket ships** (`SettingsStore.SpeechModel.grokSTTCLISocketEnabled = true`). API-key WebSocket ships either way. Dictation is the socket, not silent REST-on-stop.
+L4 passed → **CLI-socket ships** (`SettingsStore.SpeechModel.grokSTTCLISocketEnabled = true`). L2 skipped → **API-key WebSocket does not ship yet** (`SettingsStore.SpeechModel.grokSTTAPIKeySocketEnabled = false`); the API-key auth mode is not selectable for dictation until L2 passes on a machine with a key, then the flag flips to `true`. Dictation is the socket, not silent REST-on-stop.
 
 ## Protocol notes (from L4)
 

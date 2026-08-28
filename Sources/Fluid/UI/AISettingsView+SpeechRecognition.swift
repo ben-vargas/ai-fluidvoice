@@ -787,6 +787,11 @@ extension VoiceEngineSettingsView {
         {
             return "CLI WebSocket unavailable — use an API key for dictation"
         }
+        if self.settings.grokSTTAuthMode == .apiKey,
+           !SettingsStore.SpeechModel.grokSTTAPIKeySocketEnabled
+        {
+            return "API-key WebSocket not yet available — use a Grok CLI session for dictation"
+        }
         return "Needs credentials"
     }
 
@@ -805,6 +810,14 @@ extension VoiceEngineSettingsView {
 
             switch self.settings.grokSTTAuthMode {
             case .apiKey:
+                if !SettingsStore.SpeechModel.grokSTTAPIKeySocketEnabled {
+                    Text(
+                        "API-key WebSocket dictation is not enabled in this build (its live probe has not run). " +
+                            "Use the Grok CLI session mode for dictation. A saved key is kept for when this path is enabled."
+                    )
+                    .font(self.theme.typography.bodySmall)
+                    .foregroundStyle(self.voiceEngineSecondaryText)
+                }
                 Text("API key (documented): billed at xAI’s published rates (streaming ~$0.20/hour, REST ~$0.10/hour as of 2026-08-27).")
                     .font(self.theme.typography.bodySmall)
                     .foregroundStyle(self.voiceEngineSecondaryText)

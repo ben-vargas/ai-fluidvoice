@@ -12,6 +12,7 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     private let restClient: GrokSTTRESTClient
     private let socketTransport: any GrokSTTWebSocketTransporting
     private let cliSocketEnabled: Bool
+    private let apiKeySocketEnabled: Bool
     private let lock = NSLock()
     /// Meetings / LocalAPI PCM REST stays closed until PR4's consent notices land.
     private static let restNotYetAvailable = GrokSTTError.server(
@@ -31,12 +32,14 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
         resolver: any GrokSTTCredentialResolving = GrokSTTCredentialResolver.shared,
         restClient: GrokSTTRESTClient? = nil,
         socketTransport: (any GrokSTTWebSocketTransporting)? = nil,
-        cliSocketEnabled: Bool = SettingsStore.SpeechModel.grokSTTCLISocketEnabled
+        cliSocketEnabled: Bool = SettingsStore.SpeechModel.grokSTTCLISocketEnabled,
+        apiKeySocketEnabled: Bool = SettingsStore.SpeechModel.grokSTTAPIKeySocketEnabled
     ) {
         self.resolver = resolver
         self.restClient = restClient ?? GrokSTTRESTClient(resolver: resolver)
         self.socketTransport = socketTransport ?? GrokSTTURLSessionWebSocketTransport()
         self.cliSocketEnabled = cliSocketEnabled
+        self.apiKeySocketEnabled = apiKeySocketEnabled
     }
 
     var isReady: Bool {
@@ -152,7 +155,8 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
             configuration: sessionConfiguration,
             resolver: self.resolver,
             transport: self.socketTransport,
-            cliSocketEnabled: self.cliSocketEnabled
+            cliSocketEnabled: self.cliSocketEnabled,
+            apiKeySocketEnabled: self.apiKeySocketEnabled
         )
     }
 

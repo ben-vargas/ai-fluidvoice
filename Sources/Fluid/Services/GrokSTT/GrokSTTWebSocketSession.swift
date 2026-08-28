@@ -26,6 +26,7 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
     private let resolver: any GrokSTTCredentialResolving
     private let transport: any GrokSTTWebSocketTransporting
     private let cliSocketEnabled: Bool
+    private let apiKeySocketEnabled: Bool
     private let createdBudget: TimeInterval
     private let doneTimeout: TimeInterval
     private let lock = NSLock()
@@ -53,6 +54,7 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
         resolver: any GrokSTTCredentialResolving,
         transport: any GrokSTTWebSocketTransporting = GrokSTTURLSessionWebSocketTransport(),
         cliSocketEnabled: Bool = SettingsStore.SpeechModel.grokSTTCLISocketEnabled,
+        apiKeySocketEnabled: Bool = SettingsStore.SpeechModel.grokSTTAPIKeySocketEnabled,
         createdBudget: TimeInterval = GrokSTTWebSocketSession.createdBudget,
         doneTimeout: TimeInterval = GrokSTTWebSocketSession.doneTimeout
     ) {
@@ -60,6 +62,7 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
         self.resolver = resolver
         self.transport = transport
         self.cliSocketEnabled = cliSocketEnabled
+        self.apiKeySocketEnabled = apiKeySocketEnabled
         self.createdBudget = createdBudget
         self.doneTimeout = doneTimeout
         super.init()
@@ -275,6 +278,12 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
             throw GrokSTTError.server(
                 status: 501,
                 message: "CLI WebSocket is disabled. Use an API key for dictation."
+            )
+        }
+        if credential.source == .apiKey, !self.apiKeySocketEnabled {
+            throw GrokSTTError.server(
+                status: 501,
+                message: "API-key WebSocket is not enabled in this build. Use a Grok CLI session for dictation."
             )
         }
 

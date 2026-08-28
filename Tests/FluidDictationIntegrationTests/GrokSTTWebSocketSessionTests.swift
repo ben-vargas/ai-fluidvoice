@@ -38,7 +38,8 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         let session = GrokSTTWebSocketSession(
             configuration: .grokDictation,
             resolver: RecordingGrokSTTResolver(),
-            transport: transport
+            transport: transport,
+            apiKeySocketEnabled: true
         )
 
         let start = Task.detached { try await session.start() }
@@ -64,7 +65,8 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         let session = GrokSTTWebSocketSession(
             configuration: .grokDictation,
             resolver: RecordingGrokSTTResolver(),
-            transport: transport
+            transport: transport,
+            apiKeySocketEnabled: true
         )
         let start = Task.detached { try await session.start() }
         await grokSTTAssertEventually { transport.connections.count == 1 }
@@ -84,7 +86,8 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         let session = GrokSTTWebSocketSession(
             configuration: .grokDictation,
             resolver: RecordingGrokSTTResolver(),
-            transport: transport
+            transport: transport,
+            apiKeySocketEnabled: true
         )
         let start = Task.detached { try await session.start() }
         await grokSTTAssertEventually { transport.connections.count == 1 }
@@ -107,7 +110,8 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         let session = GrokSTTWebSocketSession(
             configuration: .grokDictation,
             resolver: RecordingGrokSTTResolver(),
-            transport: transport
+            transport: transport,
+            apiKeySocketEnabled: true
         )
         let start = Task.detached { try await session.start() }
         await grokSTTAssertEventually { transport.connections.count == 1 }
@@ -135,7 +139,8 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         let session = GrokSTTWebSocketSession(
             configuration: .grokDictation,
             resolver: RecordingGrokSTTResolver(),
-            transport: transport
+            transport: transport,
+            apiKeySocketEnabled: true
         )
         let start = Task.detached { try await session.start() }
         await grokSTTAssertEventually { transport.connections.count == 1 }
@@ -157,7 +162,8 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         let session = GrokSTTWebSocketSession(
             configuration: .grokDictation,
             resolver: RecordingGrokSTTResolver(),
-            transport: transport
+            transport: transport,
+            apiKeySocketEnabled: true
         )
         let pcm = [Float](repeating: 0.25, count: 3_200)
         session.handoffUnsentPCM(pcm)
@@ -187,7 +193,8 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         let session = GrokSTTWebSocketSession(
             configuration: .grokDictation,
             resolver: resolver,
-            transport: transport
+            transport: transport,
+            apiKeySocketEnabled: true
         )
         let start = Task.detached { try await session.start() }
         await grokSTTAssertEventually { transport.requests.count == 2 }
@@ -208,7 +215,8 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         let session = GrokSTTWebSocketSession(
             configuration: .grokDictation,
             resolver: resolver,
-            transport: transport
+            transport: transport,
+            apiKeySocketEnabled: true
         )
         do {
             try await Task.detached { try await session.start() }.value
@@ -261,7 +269,8 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         let session = GrokSTTWebSocketSession(
             configuration: .grokDictation,
             resolver: RecordingGrokSTTResolver(),
-            transport: transport
+            transport: transport,
+            apiKeySocketEnabled: true
         )
         try await Task.detached {
             let start = Task { try await session.start() }
@@ -288,7 +297,8 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         let session = GrokSTTWebSocketSession(
             configuration: .grokDictation,
             resolver: RecordingGrokSTTResolver(),
-            transport: transport
+            transport: transport,
+            apiKeySocketEnabled: true
         )
         let start = Task.detached { try await session.start() }
         await grokSTTAssertEventually { transport.connections.count == 1 }
@@ -319,7 +329,8 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         let session = GrokSTTWebSocketSession(
             configuration: .grokDictation,
             resolver: RecordingGrokSTTResolver(),
-            transport: transport
+            transport: transport,
+            apiKeySocketEnabled: true
         )
         let start = Task.detached { try await session.start() }
         await grokSTTAssertEventually { transport.connections.count == 1 }
@@ -361,7 +372,8 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         let session = GrokSTTWebSocketSession(
             configuration: .grokDictation,
             resolver: RecordingGrokSTTResolver(),
-            transport: transport
+            transport: transport,
+            apiKeySocketEnabled: true
         )
         let start = Task.detached { try await session.start() }
         await grokSTTAssertEventually { transport.connections.count == 1 }
@@ -395,6 +407,7 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
             configuration: .grokDictation,
             resolver: RecordingGrokSTTResolver(),
             transport: transport,
+            apiKeySocketEnabled: true,
             doneTimeout: 0.15
         )
         let start = Task.detached { try await session.start() }
@@ -440,6 +453,7 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
             configuration: .grokDictation,
             resolver: resolver,
             transport: transport,
+            apiKeySocketEnabled: true,
             createdBudget: 0.6
         )
         let started = Date()
@@ -465,7 +479,8 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         let session = GrokSTTWebSocketSession(
             configuration: .grokDictation,
             resolver: RecordingGrokSTTResolver(),
-            transport: transport
+            transport: transport,
+            apiKeySocketEnabled: true
         )
         let start = Task.detached { try await session.start() }
         await transport.connectStarted.wait()
@@ -525,6 +540,7 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
             configuration: .grokDictation,
             resolver: RecordingGrokSTTResolver(),
             transport: transport,
+            apiKeySocketEnabled: true,
             doneTimeout: 0.15
         )
         let start = Task.detached { try await session.start() }

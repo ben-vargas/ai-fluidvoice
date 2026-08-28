@@ -4580,6 +4580,10 @@ final class SettingsStore: ObservableObject {
         nonisolated static let grokSTTActivateEnabled = true
         /// L4 2026-08-28: CLI-token WebSocket reached `transcript.created` + partials + `transcript.done`.
         nonisolated static let grokSTTCLISocketEnabled = true
+        /// L2 2026-08-28: API-key WebSocket probe was SKIPPED (no xAI API key on the
+        /// probe machine; docs/grok-stt/probes-PR3b.md). An unprobed socket path does
+        /// not ship as a dictation path. Flip to `true` only after L2 actually passes.
+        nonisolated static let grokSTTAPIKeySocketEnabled = false
 
         /// True when the selected STT auth mode's source is configured.
         static var grokSTTCredentialSourceConfigured: Bool {
@@ -4591,15 +4595,18 @@ final class SettingsStore: ObservableObject {
             activateEnabled: Bool = grokSTTActivateEnabled,
             credentialSourceConfigured: Bool = grokSTTCredentialSourceConfigured,
             cliSocketEnabled: Bool = grokSTTCLISocketEnabled,
+            apiKeySocketEnabled: Bool = grokSTTAPIKeySocketEnabled,
             authMode: GrokSTTAuthMode = grokSTTAuthMode(
                 fromStoredValue: UserDefaults.standard.string(forKey: grokSTTAuthModeDefaultsKey)
             )
         ) -> Bool {
             guard catalogVisible, activateEnabled, credentialSourceConfigured else { return false }
-            if authMode == .grokCLISession {
+            switch authMode {
+            case .grokCLISession:
                 return cliSocketEnabled
+            case .apiKey:
+                return apiKeySocketEnabled
             }
-            return true
         }
 
         /// Resolves a stored speech-model raw value. Grok falls back unless the live
