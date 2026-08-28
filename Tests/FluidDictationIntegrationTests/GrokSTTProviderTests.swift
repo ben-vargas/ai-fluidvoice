@@ -78,6 +78,45 @@ final class GrokSTTProviderTests: XCTestCase {
         XCTAssertEqual(http.requests[0].timeoutInterval, GrokSTTRESTClient.meetingTimeout(durationSeconds: 2.0 / 16_000.0), accuracy: 0.01)
     }
 
+    func testMeetingChunkEmptyTranscriptIsSkippedNotThrown() async throws {
+        let http = FakeGrokSTTHTTPClient()
+        http.enqueue(status: 200, json: ["text": "hello there"])
+        http.enqueue(status: 200, json: ["text": "   "])
+        http.enqueue(status: 200, json: ["text": "world"])
+        http.enqueue(status: 400, json: ["error": "invalid audio"])
+        let resolver = StubGrokSTTResolver()
+        let provider = GrokSTTProvider(
+            resolver: resolver,
+            restClient: GrokSTTRESTClient(resolver: resolver, http: http)
+        )
+        let samples = [Float](repeating: 0.1, count: 1_600)
+        var texts: [String] = []
+        for _ in 0..<4 {
+            let result = try await provider.transcribe(samples)
+            if !result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                texts.append(result.text)
+            }
+        }
+        XCTAssertEqual(texts, ["hello there", "world"])
+        XCTAssertEqual(http.requests.count, 4)
+    }
+
+    func testDictationTranscribeFinalStillThrowsEmptyTranscript() async {
+        let http = FakeGrokSTTHTTPClient()
+        http.enqueue(status: 200, json: ["text": "  "])
+        let resolver = StubGrokSTTResolver()
+        let provider = GrokSTTProvider(
+            resolver: resolver,
+            restClient: GrokSTTRESTClient(resolver: resolver, http: http)
+        )
+        do {
+            _ = try await provider.transcribeFinal([0.25], languageCode: nil, keyterms: [])
+            XCTFail("dictation REST empty must throw")
+        } catch {
+            XCTAssertEqual(error as? GrokSTTError, .emptyTranscript)
+        }
+    }
+
     func testTranscribeFileUsesRESTClient() async throws {
         let http = FakeGrokSTTHTTPClient()
         http.enqueue(status: 200, json: ["text": "meeting-file"])
@@ -95,6 +134,22 @@ final class GrokSTTProviderTests: XCTestCase {
         XCTAssertTrue(body.contains("filename=\"standup.wav\""))
         XCTAssertFalse(body.contains("audio_format"))
         XCTAssertFalse(body.contains("diarize"))
+    }
+
+    func testTranscribeFileEmptyTranscriptReturnsEmptyResult() async throws {
+        let http = FakeGrokSTTHTTPClient()
+        http.enqueue(status: 200, json: ["text": "  "])
+        let resolver = StubGrokSTTResolver()
+        let provider = GrokSTTProvider(
+            resolver: resolver,
+            restClient: GrokSTTRESTClient(resolver: resolver, http: http)
+        )
+        let fileURL = try Self.writeTempWAV(named: "silent-meeting.wav")
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+        let result = try await provider.transcribeFile(at: fileURL)
+        XCTAssertEqual(result.text, "")
+        XCTAssertEqual(result.confidence, 0)
+        XCTAssertEqual(http.requests.count, 1)
     }
 
     func testWireLanguageCodeOmitsAutoAndMapsTl() {

@@ -121,17 +121,21 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
 
     nonisolated func transcribeFile(at fileURL: URL) async throws -> ASRTranscriptionResult {
         try await Task.detached {
-            #if DEBUG
-            if let restFileHandler = self.lock.withLock({ self.restFileHandler }) {
-                return try await restFileHandler(fileURL)
+            do {
+                #if DEBUG
+                if let restFileHandler = self.lock.withLock({ self.restFileHandler }) {
+                    return try await restFileHandler(fileURL)
+                }
+                #endif
+                let (languageCode, keyterms) = await Self.restLanguageAndKeyterms()
+                return try await self.restClient.transcribeFile(
+                    at: fileURL,
+                    languageCode: languageCode,
+                    keyterms: keyterms
+                )
+            } catch GrokSTTError.emptyTranscript {
+                return ASRTranscriptionResult(text: "", confidence: 0)
             }
-            #endif
-            let (languageCode, keyterms) = await Self.restLanguageAndKeyterms()
-            return try await self.restClient.transcribeFile(
-                at: fileURL,
-                languageCode: languageCode,
-                keyterms: keyterms
-            )
         }.value
     }
 
@@ -173,18 +177,22 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
         timeout: TimeInterval
     ) async throws -> ASRTranscriptionResult {
         try await Task.detached { [samples, timeout] in
-            #if DEBUG
-            if let restFinalHandler = self.lock.withLock({ self.restFinalHandler }) {
-                return try await restFinalHandler(samples, nil)
+            do {
+                #if DEBUG
+                if let restFinalHandler = self.lock.withLock({ self.restFinalHandler }) {
+                    return try await restFinalHandler(samples, nil)
+                }
+                #endif
+                let (languageCode, keyterms) = await Self.restLanguageAndKeyterms()
+                return try await self.restClient.transcribePCM(
+                    samples,
+                    languageCode: languageCode,
+                    keyterms: keyterms,
+                    timeout: timeout
+                )
+            } catch GrokSTTError.emptyTranscript, GrokSTTError.invalidAudio {
+                return ASRTranscriptionResult(text: "", confidence: 0)
             }
-            #endif
-            let (languageCode, keyterms) = await Self.restLanguageAndKeyterms()
-            return try await self.restClient.transcribePCM(
-                samples,
-                languageCode: languageCode,
-                keyterms: keyterms,
-                timeout: timeout
-            )
         }.value
     }
 
