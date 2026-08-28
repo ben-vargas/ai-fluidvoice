@@ -208,3 +208,19 @@ Blocking/major items (pre-`audio.done` send-state, concurrent drainers, done-tim
 - **`append(pcm16:)` after finish/cancel no-ops without the specified debug assert** (`Sources/Fluid/Services/GrokSTT/GrokSTTWebSocketSession.swift`). GROK-STT-DESIGN says append after finish/cancel is illegal (no-op + assert in debug). The implementation still silently returns when `state != .streaming`, including the legitimate pre-`created` no-op. Suggested: debug-only assert for `.finishing` / `.cancelled` / `.complete` while keeping `.waitCreated` quiet.
 
 - **Stale "Not activatable yet" hint copy is now unreachable and would be wrong if shown** (`Sources/Fluid/UI/AISettingsView+SpeechRecognition.swift`). `grokSTTActivateHint` still returns "Not activatable yet" when a credential source is configured. With Activate and CLI-socket enabled, `canActivateVoiceEngine` is false only when no credential source exists, so that string is only reachable via a "Needs credentials" path that already has its own copy. Suggested: delete the stale branch or replace it with Activate-available copy.
+
+## PR3b review round 2
+
+The round-1 leftover `append(pcm16:)` debug assert for `.finishing` / `.complete` / `.cancelled` / `.failed` was applied. Codex's matching minor is the same change.
+
+### Codex
+
+No leftover minors. The L2 API-key WebSocket probe remains skipped: no STT API key in process env, launchctl, or `com.fluidvoice.stt-credentials`; LLM Keychain `com.fluidvoice.provider-api-keys` / `"xai"` must not be reused; the result is not faked. L4 already exercised `wss://api.x.ai/v1/stt`.
+
+### Claude
+
+- **Connection and URLSession leak on post-`audio.done` transport drop** (`Sources/Fluid/Services/GrokSTT/GrokSTTWebSocketSession.swift`). When the socket dies after `audio.done` with non-empty text, `handleTransportFailure` marks `.complete` and resumes finish waiters without `closeConnection()`. ASRService then `cancel()`s a already-terminal session, so `URLSession` is never `invalidateAndCancel()`'d. One leaked pair per dictation that ends this way. The `recordDone` and done-timeout paths both close correctly. Suggested: call `self.closeConnection()` in the post-done success branch of `handleTransportFailure` before `resumeFinishWaiters(.success(assembled))`.
+
+- **`isGrokSTTSelectable` reads `UserDefaults.standard` instead of the store's injected defaults** (`Sources/Fluid/Persistence/SettingsStore.swift`). The `authMode` default argument hardcodes `UserDefaults.standard.string(forKey: grokSTTAuthModeDefaultsKey)` (`:4594-4596`), while `SettingsStore.grokSTTAuthMode` reads `self.defaults` (`:5962-5966`). A test or configuration that injects a non-standard defaults suite will see the two disagree. `GrokSTTCredentialResolverDependencies.production()` has the same pattern (PR2). Suggested: thread the auth mode in from the caller (or `SettingsStore.shared.grokSTTAuthMode`) rather than reading `UserDefaults.standard` in a default argument.
+
+- **`canActivateVoiceEngine` now performs Keychain / auth.json I/O from a SwiftUI body** (`Sources/Fluid/Persistence/SettingsStore.swift`). `SpeechModel.canActivateVoiceEngine` calls `isGrokSTTSelectable()`, which evaluates `grokSTTCredentialSourceConfigured` → Keychain or `~/.grok/auth.json` I/O. That property is read from `.disabled(...)` in the engine list body (`AISettingsView+SpeechRecognition.swift:475`) on every render. Only the Grok row reaches it. PR2 already calls the same property at `:775` / `:790`. Suggested: cache the credential-source result in `VoiceEngineSettingsViewModel` (refreshed on appear and on auth-mode/key change).
