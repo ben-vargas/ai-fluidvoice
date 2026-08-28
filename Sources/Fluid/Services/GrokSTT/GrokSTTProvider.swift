@@ -1,6 +1,6 @@
 import Foundation
 
-/// Cloud Grok Speech provider. Session factory is real in PR3b; REST throws until then.
+/// Cloud Grok Speech provider. WebSocket dictation + REST empty-socket retry.
 /// Not MainActor — `TranscriptionExecutor.run { transcribeFinal }` would deadlock if it were.
 final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscriptionProviding, @unchecked Sendable {
     let name = "Grok Speech (xAI)"
@@ -9,6 +9,9 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     let shouldClearCacheAfterCancellation = false
 
     private let resolver: any GrokSTTCredentialResolving
+    private let restClient: GrokSTTRESTClient
+    private let socketTransport: any GrokSTTWebSocketTransporting
+    private let cliSocketEnabled: Bool
     private let lock = NSLock()
 
     #if DEBUG
@@ -19,8 +22,16 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     private var prepareCallCountStorage = 0
     #endif
 
-    init(resolver: any GrokSTTCredentialResolving = GrokSTTCredentialResolver.shared) {
+    init(
+        resolver: any GrokSTTCredentialResolving = GrokSTTCredentialResolver.shared,
+        restClient: GrokSTTRESTClient? = nil,
+        socketTransport: (any GrokSTTWebSocketTransporting)? = nil,
+        cliSocketEnabled: Bool = SettingsStore.SpeechModel.grokSTTCLISocketEnabled
+    ) {
         self.resolver = resolver
+        self.restClient = restClient ?? GrokSTTRESTClient(resolver: resolver)
+        self.socketTransport = socketTransport ?? GrokSTTURLSessionWebSocketTransport()
+        self.cliSocketEnabled = cliSocketEnabled
     }
 
     var isReady: Bool {
@@ -88,7 +99,11 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
                 return try await restFinalHandler(samples, languageCode)
             }
             #endif
-            throw GrokSTTError.server(status: 501, message: "Grok REST speech-to-text is not available yet.")
+            return try await self.restClient.transcribePCM(
+                samples,
+                languageCode: Self.wireLanguageCode(languageCode),
+                keyterms: []
+            )
         }.value
     }
 
@@ -120,6 +135,23 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
             return try factory(configuration)
         }
         #endif
-        throw GrokSTTError.server(status: 501, message: "Grok streaming speech-to-text is not available yet.")
+        var sessionConfiguration = configuration
+        sessionConfiguration.languageCode = Self.wireLanguageCode(configuration.languageCode)
+        return GrokSTTWebSocketSession(
+            configuration: sessionConfiguration,
+            resolver: self.resolver,
+            transport: self.socketTransport,
+            cliSocketEnabled: self.cliSocketEnabled
+        )
+    }
+
+    /// Wire `language` value. `nil` / Auto omits the param. Catalog `tl` is sent as `fil`.
+    nonisolated static func wireLanguageCode(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed.caseInsensitiveCompare("auto") == .orderedSame {
+            return nil
+        }
+        return trimmed == "tl" ? "fil" : trimmed
     }
 }

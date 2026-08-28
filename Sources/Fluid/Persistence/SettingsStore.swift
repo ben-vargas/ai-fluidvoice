@@ -4574,10 +4574,12 @@ final class SettingsStore: ObservableObject {
         /// Flip to `true` in a future round to re-enable Qwen without deleting implementation.
         static let qwenPreviewEnabled = false
 
-        /// PR2 shows the Grok Speech card. Activate stays off until PR3b wires the socket.
-        static let grokSTTCatalogVisible = true
-        /// Flip to `true` in PR3b once the real WebSocket session is wired.
-        static let grokSTTActivateEnabled = false
+        /// PR2 shows the Grok Speech card. Activate is on once the real socket is wired (PR3b).
+        nonisolated static let grokSTTCatalogVisible = true
+        /// Real WebSocket session is wired. Activate is the first user-selectable dictation path.
+        nonisolated static let grokSTTActivateEnabled = true
+        /// L4 2026-08-28: CLI-token WebSocket reached `transcript.created` + partials + `transcript.done`.
+        nonisolated static let grokSTTCLISocketEnabled = true
 
         /// True when the selected STT auth mode's source is configured.
         static var grokSTTCredentialSourceConfigured: Bool {
@@ -4587,9 +4589,17 @@ final class SettingsStore: ObservableObject {
         static func isGrokSTTSelectable(
             catalogVisible: Bool = grokSTTCatalogVisible,
             activateEnabled: Bool = grokSTTActivateEnabled,
-            credentialSourceConfigured: Bool = grokSTTCredentialSourceConfigured
+            credentialSourceConfigured: Bool = grokSTTCredentialSourceConfigured,
+            cliSocketEnabled: Bool = grokSTTCLISocketEnabled,
+            authMode: GrokSTTAuthMode = grokSTTAuthMode(
+                fromStoredValue: UserDefaults.standard.string(forKey: grokSTTAuthModeDefaultsKey)
+            )
         ) -> Bool {
-            catalogVisible && activateEnabled && credentialSourceConfigured
+            guard catalogVisible, activateEnabled, credentialSourceConfigured else { return false }
+            if authMode == .grokCLISession {
+                return cliSocketEnabled
+            }
+            return true
         }
 
         /// Resolves a stored speech-model raw value. Grok falls back unless the live
@@ -5340,7 +5350,7 @@ final class SettingsStore: ObservableObject {
         var canActivateVoiceEngine: Bool {
             switch self {
             case .grokSTT:
-                return Self.grokSTTActivateEnabled
+                return Self.isGrokSTTSelectable()
             default:
                 return true
             }

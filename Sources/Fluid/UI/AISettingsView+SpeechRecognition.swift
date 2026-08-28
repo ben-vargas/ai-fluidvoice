@@ -782,6 +782,11 @@ extension VoiceEngineSettingsView {
     }
 
     private var grokSTTActivateHint: String {
+        if self.settings.grokSTTAuthMode == .grokCLISession,
+           !SettingsStore.SpeechModel.grokSTTCLISocketEnabled
+        {
+            return "CLI WebSocket unavailable — use an API key for dictation"
+        }
         if SettingsStore.SpeechModel.grokSTTCredentialSourceConfigured {
             return "Not activatable yet"
         }
@@ -829,6 +834,14 @@ extension VoiceEngineSettingsView {
                     }
                 }
             case .grokCLISession:
+                if !SettingsStore.SpeechModel.grokSTTCLISocketEnabled {
+                    Text(
+                        "CLI WebSocket is disabled (live probe failed). Dictation requires an API key. " +
+                            "CLI REST retry still works."
+                    )
+                    .font(self.theme.typography.bodySmall)
+                    .foregroundStyle(self.voiceEngineSecondaryText)
+                }
                 Text(
                     "Grok CLI session (experimental, undocumented): uses a read-only ~/.grok/auth.json. " +
                         "xAI does not publish that this token is valid for STT; it may stop working. " +

@@ -21,4 +21,38 @@ nonisolated enum GrokSTTAudioConverter {
     static func pcm16LE(fromFloat32 samples: [Float]) -> Data {
         self.pcm16LE(fromFloat32: samples[...])
     }
+
+    /// 44-byte WAV header + PCM16 LE. Same scaling as `pcm16LE` / dictation history.
+    static func wav(fromFloat32 samples: [Float]) -> Data {
+        let pcm = self.pcm16LE(fromFloat32: samples)
+        let dataByteCount = pcm.count
+        let byteRate = self.sampleRate * 2
+        var data = Data()
+        data.reserveCapacity(44 + dataByteCount)
+        data.append(contentsOf: Array("RIFF".utf8))
+        Self.appendUInt32LE(UInt32(36 + dataByteCount), to: &data)
+        data.append(contentsOf: Array("WAVE".utf8))
+        data.append(contentsOf: Array("fmt ".utf8))
+        Self.appendUInt32LE(16, to: &data)
+        Self.appendUInt16LE(1, to: &data)
+        Self.appendUInt16LE(1, to: &data)
+        Self.appendUInt32LE(UInt32(self.sampleRate), to: &data)
+        Self.appendUInt32LE(UInt32(byteRate), to: &data)
+        Self.appendUInt16LE(2, to: &data)
+        Self.appendUInt16LE(16, to: &data)
+        data.append(contentsOf: Array("data".utf8))
+        Self.appendUInt32LE(UInt32(dataByteCount), to: &data)
+        data.append(pcm)
+        return data
+    }
+
+    private static func appendUInt16LE(_ value: UInt16, to data: inout Data) {
+        var littleEndian = value.littleEndian
+        withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
+    }
+
+    private static func appendUInt32LE(_ value: UInt32, to data: inout Data) {
+        var littleEndian = value.littleEndian
+        withUnsafeBytes(of: &littleEndian) { data.append(contentsOf: $0) }
+    }
 }
