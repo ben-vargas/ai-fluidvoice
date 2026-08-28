@@ -2516,13 +2516,16 @@ struct ContentView: View {
             context: context,
             didRequestOverlayHideOnStop: didRequestOverlayHideOnStop
         )
-        await DictationSuccessfulStopDispatcher.invoke(
-            dispatch,
-            promptTest: { await self.handlePromptTestSuccessfulStop(transcribedText: $0) },
-            rewrite: { await self.handleRewriteSuccessfulStop(transcribedText: $0) },
-            command: { await self.handleCommandSuccessfulStop(transcribedText: $0) },
-            dictation: { await self.handleDictationSuccessfulStop($0) }
-        )
+        switch dispatch.intent {
+        case .promptTest:
+            await self.handlePromptTestSuccessfulStop(transcribedText: dispatch.transcribedText)
+        case .rewrite:
+            await self.handleRewriteSuccessfulStop(transcribedText: dispatch.transcribedText)
+        case .command:
+            await self.handleCommandSuccessfulStop(transcribedText: dispatch.transcribedText)
+        case .dictation:
+            await self.handleDictationSuccessfulStop(dispatch)
+        }
     }
 
     private func handlePromptTestSuccessfulStop(transcribedText: String) async {
@@ -5204,26 +5207,5 @@ struct DictationSuccessfulStopDispatch {
 
     var intent: DictationSuccessfulStopIntent {
         DictationStopRoutingPolicy.intent(for: self.context)
-    }
-}
-
-enum DictationSuccessfulStopDispatcher {
-    static func invoke(
-        _ dispatch: DictationSuccessfulStopDispatch,
-        promptTest: (String) async -> Void,
-        rewrite: (String) async -> Void,
-        command: (String) async -> Void,
-        dictation: (DictationSuccessfulStopDispatch) async -> Void
-    ) async {
-        switch dispatch.intent {
-        case .promptTest:
-            await promptTest(dispatch.transcribedText)
-        case .rewrite:
-            await rewrite(dispatch.transcribedText)
-        case .command:
-            await command(dispatch.transcribedText)
-        case .dictation:
-            await dictation(dispatch)
-        }
     }
 }

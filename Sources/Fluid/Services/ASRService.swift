@@ -284,7 +284,8 @@ final class ASRService: ObservableObject {
     /// Originating Grok recording is still being finalized. Reset must not steal this owner.
     private var sessionOwnerLive = false
     private var sessionOwnerGeneration: UInt64 = 0
-    private var deferredSessionReset = false
+    /// Stop owns `audioBuffer` from `isRunning = false` until `getAll()`/`clear()`.
+    private var sessionStopOwnsSharedCapture = false
     /// Snapshot of the session-path decision at `isRunning = false`, used after stop awaits.
     private var stopUsesSessionPath = false
 
@@ -702,7 +703,6 @@ final class ASRService: ObservableObject {
             // Keep the originating session, provider, and retry store until that
             // recording's stop finalization finishes. A live Grok capture must
             // not fall through to the newly selected local engine.
-            self.deferredSessionReset = true
             self.grokSTTProvider = nil
         } else {
             let retiringPump = self.sessionPumpTask
@@ -719,7 +719,6 @@ final class ASRService: ObservableObject {
             self.createdReceived = false
             self.isSessionDictation = false
             self.sessionGrokProvider = nil
-            self.clearGrokRetryStore()
             self.grokSTTProvider = nil
             if retiringPump != nil || retiringStart != nil {
                 Task {
@@ -1807,6 +1806,14 @@ final class ASRService: ObservableObject {
     ) async -> AudioCaptureStartOutcome {
         DebugLogger.shared.info("🎤 START() called - beginning recording session", source: "ASRService")
 
+        guard self.sessionStopOwnsSharedCapture == false else {
+            DebugLogger.shared.warning(
+                "⚠️ START() blocked - previous session still draining capture",
+                source: "ASRService"
+            )
+            return .alreadyActive
+        }
+
         #if DEBUG
         if self.testBypassHardwareCapture {
             return await self.startBypassingHardwareCapture(
@@ -2455,6 +2462,9 @@ final class ASRService: ObservableObject {
         self.sessionPumpGate.requestStop()
         self.stopUsesSessionPath = self.isSessionDictation
             || self.transcriptionProvider is StreamingTranscriptionProviding
+        if self.stopUsesSessionPath {
+            self.sessionStopOwnsSharedCapture = true
+        }
         let sessionStop = self.makeStreamingSessionStopIdentity()
         DebugLogger.shared.debug("✅ isRunning disabled", source: "ASRService")
 
@@ -2511,6 +2521,7 @@ final class ASRService: ObservableObject {
         var pcm = self.audioBuffer.getAll()
         self.audioBuffer.clear()
         let capturedPCM = pcm
+        self.sessionStopOwnsSharedCapture = false
         self.benchmarkLog("stop_audio_drained samples=\(pcm.count) audioMs=\(Int((Double(pcm.count) / 16_000.0 * 1000).rounded()))")
 
         if self.stopUsesSessionPath {
@@ -4776,7 +4787,7 @@ final class ASRService: ObservableObject {
         let session: StreamingTranscriptionSession?
         let pumpTask: Task<Void, Never>?
         let startTask: Task<Void, Never>?
-        let sentCursor: Int
+        let pumpGate: GrokSTTSessionPumpGate
         let stickyError: GrokSTTError?
         let grokProvider: GrokSTTProvider?
     }
@@ -4805,7 +4816,6 @@ final class ASRService: ObservableObject {
         self.createdReceived = false
         self.isSessionDictation = true
         self.sessionOwnerLive = true
-        self.deferredSessionReset = false
         self.lastGrokLanguageCode = SettingsStore.shared.selectedGrokSTTLanguageCode
         self.sessionGrokProvider = self.transcriptionProvider as? GrokSTTProvider
         self.sessionGeneration &+= 1
@@ -4928,7 +4938,8 @@ final class ASRService: ObservableObject {
     ) async -> String {
         let session = sessionStop.session
         let sticky = sessionStop.stickyError ?? session?.transportError
-        let sentCursor = sessionStop.sentCursor
+        // Pump has already been joined; this is the true sent cursor.
+        let sentCursor = sessionStop.pumpGate.snapshot.sentCursor
 
         if capturedPCM.isEmpty && (session?.transcript ?? "").isEmpty && sticky == nil {
             let ownsSession = self.stillOwnsStreamingSession(sessionStop.generation)
@@ -5111,7 +5122,7 @@ final class ASRService: ObservableObject {
             session: self.activeStreamingSession,
             pumpTask: self.sessionPumpTask,
             startTask: self.sessionStartTask,
-            sentCursor: self.sessionPumpGate.snapshot.sentCursor,
+            pumpGate: self.sessionPumpGate,
             stickyError: self.sessionTransportError,
             grokProvider: self.sessionGrokProvider
         )
@@ -5217,10 +5228,6 @@ final class ASRService: ObservableObject {
             return
         }
         self.sessionOwnerLive = false
-        guard self.deferredSessionReset else { return }
-        self.deferredSessionReset = false
-        // Retry retained by the just-finished stop must survive this deferred
-        // cleanup. Cache/provider reset already ran when the user switched.
     }
 
     private func publishDictationAudioSnapshotIfConfigured(from capturedPCM: [Float]) {
@@ -5313,14 +5320,20 @@ final class ASRService: ObservableObject {
 
     var debugSessionOwnerLive: Bool { self.sessionOwnerLive }
 
+    var debugSessionStopOwnsSharedCapture: Bool { self.sessionStopOwnsSharedCapture }
+
     var debugSessionGrokProvider: GrokSTTProvider? { self.sessionGrokProvider }
 
     private func startBypassingHardwareCapture(
         forDictionaryTraining: Bool,
         onCaptureStarted: (@MainActor () -> Void)?
     ) async -> AudioCaptureStartOutcome {
-        guard self.isRunning == false, self.isStarting == false, self.isTerminating == false else {
-            return self.isRunning || self.isStarting ? .alreadyActive : .failed
+        guard self.sessionStopOwnsSharedCapture == false,
+              self.isRunning == false,
+              self.isStarting == false,
+              self.isTerminating == false
+        else {
+            return self.sessionStopOwnsSharedCapture || self.isRunning || self.isStarting ? .alreadyActive : .failed
         }
         self.isStarting = true
         defer { self.finishAudioCaptureStart() }

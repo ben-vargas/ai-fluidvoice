@@ -19,6 +19,26 @@ final class GrokSTTKeytermBuilderTests: XCTestCase {
         XCTAssertEqual(fromEntries.last, "TermText")
     }
 
+    @MainActor
+    func testEntityMappingEmitsReplacementAndTextNotTriggerOrAlias() {
+        let entry = SettingsStore.CustomDictionaryEntry(
+            triggers: ["trigger-should-not-appear"],
+            replacement: "CanonicalReplacement"
+        )
+        let term = ParakeetVocabularyStore.VocabularyConfig.Term(
+            text: "TermText",
+            weight: 1.0,
+            aliases: ["alias-should-not-appear"]
+        )
+        let terms = GrokSTTKeytermBuilder.terms(
+            replacements: [entry],
+            vocabulary: [term]
+        )
+        XCTAssertEqual(terms, ["CanonicalReplacement", "TermText"])
+        XCTAssertFalse(terms.contains("trigger-should-not-appear"))
+        XCTAssertFalse(terms.contains("alias-should-not-appear"))
+    }
+
     func testCap100AndDropOver50NotTruncate() {
         let replacements = (0..<120).map { "term-\($0)" }
         let terms = GrokSTTKeytermBuilder.terms(replacementTexts: replacements, vocabularyTexts: [])

@@ -37,6 +37,7 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
     private var handoffSamples: [Float] = []
     private var createdContinuation: CheckedContinuation<Void, Error>?
     private var appendBlocked = false
+    private var appendBlockConsumed = false
     private var onPartialHandler: (@MainActor (String) -> Void)?
 
     private(set) var appendedFrames: [Data] = []
@@ -144,7 +145,8 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
                 return false
             }
             self.appendedFrames.append(pcm16)
-            if self.configuration.blockAppend, !self.appendBlocked {
+            if self.configuration.blockAppend, !self.appendBlockConsumed {
+                self.appendBlockConsumed = true
                 self.appendBlocked = true
                 return true
             }
