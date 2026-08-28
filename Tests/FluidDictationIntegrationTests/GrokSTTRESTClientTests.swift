@@ -113,6 +113,94 @@ final class GrokSTTRESTClientTests: XCTestCase {
         }
     }
 
+    func testMeetingTimeoutFormula() {
+        XCTAssertEqual(GrokSTTRESTClient.meetingTimeout(durationSeconds: 10), 50)
+        XCTAssertEqual(GrokSTTRESTClient.meetingTimeout(durationSeconds: 300), 600)
+        XCTAssertEqual(GrokSTTRESTClient.meetingTimeout(durationSeconds: 0), 600)
+        XCTAssertEqual(GrokSTTRESTClient.meetingTimeout(durationSeconds: -4), 600)
+        XCTAssertEqual(GrokSTTRESTClient.meetingTimeout(durationSeconds: .nan), 600)
+        XCTAssertEqual(GrokSTTRESTClient.meetingTimeout(durationSeconds: .infinity), 600)
+    }
+
+    func testM4AIsNotAVideoContainer() {
+        XCTAssertFalse(GrokSTTRESTClient.isVideoContainer(URL(fileURLWithPath: "/tmp/clip.m4a")))
+        XCTAssertFalse(GrokSTTRESTClient.isVideoContainer(URL(fileURLWithPath: "/tmp/clip.wav")))
+        XCTAssertFalse(GrokSTTRESTClient.isVideoContainer(URL(fileURLWithPath: "/tmp/clip.mp3")))
+        XCTAssertTrue(GrokSTTRESTClient.isVideoContainer(URL(fileURLWithPath: "/tmp/clip.mp4")))
+        XCTAssertTrue(GrokSTTRESTClient.isVideoContainer(URL(fileURLWithPath: "/tmp/clip.mov")))
+        XCTAssertTrue(GrokSTTRESTClient.isVideoContainer(URL(fileURLWithPath: "/tmp/clip.m4v")))
+    }
+
+    func testTranscribeFilePostsOriginalFilenameWithoutAudioFormat() async throws {
+        let http = FakeGrokSTTHTTPClient()
+        http.enqueue(status: 200, json: ["text": "from-file"])
+        let client = GrokSTTRESTClient(resolver: RecordingGrokSTTResolver(), http: http)
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("standup.wav")
+        try GrokSTTAudioConverter.wav(fromFloat32: [Float](repeating: 0.2, count: 1_600)).write(to: fileURL)
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        let result = try await client.transcribeFile(
+            at: fileURL,
+            languageCode: "en",
+            keyterms: ["FluidVoice"]
+        )
+        XCTAssertEqual(result.text, "from-file")
+        XCTAssertEqual(http.requests.count, 1)
+        let body = http.requests[0].httpBody ?? Data()
+        let bodyString = String(decoding: body, as: UTF8.self)
+        XCTAssertTrue(bodyString.contains("filename=\"standup.wav\""))
+        XCTAssertTrue(bodyString.contains("Content-Type: audio/wav"))
+        XCTAssertFalse(bodyString.contains("audio_format"))
+        XCTAssertFalse(bodyString.contains("diarize"))
+        let languageRange = bodyString.range(of: "name=\"language\"")
+        let fileRange = bodyString.range(of: "name=\"file\"")
+        XCTAssertNotNil(languageRange)
+        XCTAssertNotNil(fileRange)
+        XCTAssertLessThan(languageRange!.lowerBound, fileRange!.lowerBound)
+        XCTAssertEqual(
+            http.requests[0].timeoutInterval,
+            GrokSTTRESTClient.meetingTimeout(durationSeconds: GrokSTTRESTClient.durationSeconds(of: fileURL)),
+            accuracy: 0.1
+        )
+    }
+
+    func testVideoContainerIsNotPosted() async {
+        let http = FakeGrokSTTHTTPClient()
+        http.enqueue(status: 200, json: ["text": "should-not-see"])
+        let client = GrokSTTRESTClient(resolver: RecordingGrokSTTResolver(), http: http)
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("interview.mp4")
+        FileManager.default.createFile(atPath: fileURL.path, contents: Data("not-a-real-mp4".utf8))
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        do {
+            _ = try await client.transcribeFile(at: fileURL, languageCode: nil)
+            XCTFail("video containers must not be POSTed")
+        } catch {
+            XCTAssertEqual(error as? GrokSTTError, .videoUploadForbidden)
+        }
+        XCTAssertEqual(http.requests.count, 0)
+    }
+
+    func testFileTooLargeThrowsBeforeUpload() async throws {
+        let http = FakeGrokSTTHTTPClient()
+        http.enqueue(status: 200, json: ["text": "should-not-see"])
+        let client = GrokSTTRESTClient(resolver: RecordingGrokSTTResolver(), http: http)
+        let fileURL = FileManager.default.temporaryDirectory.appendingPathComponent("huge.wav")
+        FileManager.default.createFile(atPath: fileURL.path, contents: Data("RIFF".utf8))
+        let handle = try FileHandle(forWritingTo: fileURL)
+        try handle.truncate(atOffset: UInt64(GrokSTTRESTClient.maxFileBytes) + 1)
+        try handle.close()
+        defer { try? FileManager.default.removeItem(at: fileURL) }
+
+        do {
+            _ = try await client.transcribeFile(at: fileURL, languageCode: nil)
+            XCTFail("oversized files must fail before upload")
+        } catch {
+            XCTAssertEqual(error as? GrokSTTError, .fileTooLarge)
+        }
+        XCTAssertEqual(http.requests.count, 0)
+    }
+
     func testErrorsDoNotEmbedBearer() async {
         let http = FakeGrokSTTHTTPClient()
         http.enqueue(status: 401, json: ["error": "Bearer supersecret-token-value-12345678901234567890"])
