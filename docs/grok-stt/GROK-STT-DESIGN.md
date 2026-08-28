@@ -1035,8 +1035,8 @@ Required values:
 | `isCloudEngine` | **`true`** | new |
 | `supportsPronunciationMatching` | `false` | |
 | `requiredMemoryGB` | `2.0` | negligible local |
-| `speedRating` / `accuracyRating` | **`4` / `4`** | exhaustive Int switches; placeholders, not a quality claim |
-| `speedPercent` / `accuracyPercent` | `0.90` / `0.85` | honest-ish placeholders; not a quality claim |
+| `speedRating` / `accuracyRating` | **`3` / `4`** | speed below local streaming; accuracy in the Parakeet-v3 / Whisper-turbo English band |
+| `speedPercent` / `accuracyPercent` | `0.70` / `0.88` | Cloud first-partial ~1 s (not Parakeet-instant); AA-WER ~4% English. Not a measured on-device RTFx. |
 | `badgeText` | `Cloud · Experimental` | **silent default `nil`** — must set explicitly |
 | `provider` | `.xai` (new `Provider` case) | |
 | `brandName` | `xAI` | |
@@ -1423,7 +1423,7 @@ Place unit tests next to existing ones under `Tests/FluidDictationIntegrationTes
 
 | ID | Case | Expect |
 |---|---|---|
-| U1 | `SpeechModel.grokSTT` landmines | `isWhisperModel==false`, `supportsStreaming==true`, `isInstalled==true`, `isCloudEngine==true`, `hasRemovableLocalArtifacts==false`, `usesAppleLogo==false`, `expectedDownloadBytes==0`, `speedRating==4`, `accuracyRating==4`, `badgeText=="Cloud · Experimental"` |
+| U1 | `SpeechModel.grokSTT` landmines | `isWhisperModel==false`, `supportsStreaming==true`, `isInstalled==true`, `isCloudEngine==true`, `hasRemovableLocalArtifacts==false`, `usesAppleLogo==false`, `expectedDownloadBytes==0`, `speedRating==3`, `accuracyRating==4`, `speedPercent==0.70`, `accuracyPercent==0.88`, `badgeText=="Cloud · Experimental"` |
 | U2 | `transcriptionProvider` / `getProvider(for:)` | `.grokSTT` returns `GrokSTTProvider`; Whisper cases still Whisper; no `default:` |
 | U3 | `modelsExistOnDisk()==false` | `prepareProviderWithRecovery` does not second-prepare (inject failing prepare) |
 | U4 | Settings card | Neither Download nor Delete for Grok (view-model / capability test) |

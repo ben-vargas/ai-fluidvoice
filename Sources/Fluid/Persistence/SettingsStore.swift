@@ -16,6 +16,8 @@ final class SettingsStore: ObservableObject {
     static let shared = SettingsStore()
     private static let automaticWhisperLanguageCode = "auto"
     private static let automaticGrokSTTLanguageCode = "auto"
+    /// First-time Grok Speech uses English. Explicit Automatic still stores `"auto"`.
+    static let defaultGrokSTTLanguageCode = "en"
     nonisolated static let grokSTTAuthModeDefaultsKey = "GrokSTTAuthMode"
     nonisolated static let grokCLIBinaryPathDefaultsKey = "GrokCLIBinaryPath"
     static let transcriptionPreviewCharLimitRange: ClosedRange<Int> = 50...800
@@ -4995,7 +4997,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return 2
             case .whisperLargeTurbo: return 3
             case .whisperLarge: return 1
-            case .grokSTT: return 4
+            case .grokSTT: return 3
             }
         }
 
@@ -5039,7 +5041,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return 0.40
             case .whisperLargeTurbo: return 0.65
             case .whisperLarge: return 0.20
-            case .grokSTT: return 0.90
+            case .grokSTT: return 0.70
             }
         }
 
@@ -5061,7 +5063,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return 0.80
             case .whisperLargeTurbo: return 0.95
             case .whisperLarge: return 1.00
-            case .grokSTT: return 0.85
+            case .grokSTT: return 0.88
             }
         }
 
@@ -5939,7 +5941,9 @@ extension SettingsStore {
     /// Catalog Tagalog `tl` is stored and sent as `fil`. Mandarin `zh` is not valid.
     var selectedGrokSTTLanguageCode: String? {
         get {
-            Self.grokSTTLanguageCode(fromStoredValue: self.defaults.string(forKey: Keys.selectedGrokSTTLanguageCode))
+            Self.resolvedGrokSTTLanguageCode(
+                storedObject: self.defaults.object(forKey: Keys.selectedGrokSTTLanguageCode)
+            )
         }
         set {
             objectWillChange.send()
@@ -5985,6 +5989,12 @@ extension SettingsStore {
     static func grokSTTLanguageCode(fromStoredValue value: String?) -> String? {
         guard let value, value != self.automaticGrokSTTLanguageCode else { return nil }
         return Self.normalizedGrokSTTLanguageCode(value)
+    }
+
+    /// Missing UserDefaults key → English. Stored `"auto"` → `nil` (omit the STT language param).
+    static func resolvedGrokSTTLanguageCode(storedObject: Any?) -> String? {
+        guard storedObject != nil else { return self.defaultGrokSTTLanguageCode }
+        return self.grokSTTLanguageCode(fromStoredValue: storedObject as? String)
     }
 
     static func grokSTTLanguageBackupValue(for languageCode: String?) -> String {

@@ -9,6 +9,14 @@ final class GrokSTTLanguageSelectionTests: XCTestCase {
         XCTAssertNil(SettingsStore.grokSTTQueryLanguageParameter(fromStoredValue: "auto"))
     }
 
+    func testMissingStoredLanguageDefaultsToEnglish() {
+        XCTAssertEqual(SettingsStore.defaultGrokSTTLanguageCode, "en")
+        XCTAssertEqual(SettingsStore.resolvedGrokSTTLanguageCode(storedObject: nil), "en")
+        XCTAssertNil(SettingsStore.resolvedGrokSTTLanguageCode(storedObject: "auto"))
+        XCTAssertEqual(SettingsStore.resolvedGrokSTTLanguageCode(storedObject: "en"), "en")
+        XCTAssertEqual(SettingsStore.resolvedGrokSTTLanguageCode(storedObject: "fil"), "fil")
+    }
+
     func testFilipinoIsStoredAndSentAsFil() {
         XCTAssertEqual(SettingsStore.grokSTTLanguageCode(fromStoredValue: "fil"), "fil")
         XCTAssertEqual(SettingsStore.grokSTTQueryLanguageParameter(fromStoredValue: "fil"), "fil")
