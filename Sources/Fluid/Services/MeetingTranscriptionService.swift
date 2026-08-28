@@ -355,6 +355,16 @@ final class MeetingTranscriptionService: ObservableObject {
     /// Error copy shown when a dropped file is not accepted.
     static let dropErrorCopy = "Accepted file types: WAV, MP3, M4A, OGG, OPUS, MP4, MOV, and more."
 
+    /// Local diarizer stays on the local-engine path. Grok never sends `diarize` and never runs speaker labels.
+    nonisolated static func shouldAttemptSpeakerLabels(
+        speakerLabelsEnabled: Bool,
+        isSupported: Bool,
+        isVideoContainer: Bool,
+        isCloudEngine: Bool
+    ) -> Bool {
+        speakerLabelsEnabled && isSupported && !isVideoContainer && !isCloudEngine
+    }
+
     /// Share the ASR service instance to avoid loading models twice
     private let asrService: ASRService
 
@@ -459,9 +469,13 @@ final class MeetingTranscriptionService: ObservableObject {
 
             // Speaker-labeled path: diarize first, then transcribe each speaker turn.
             // Any diarization failure falls back to the standard paths below.
-            if SettingsStore.shared.fileTranscriptionSpeakerLabelsEnabled,
-               SpeakerDiarizationService.isSupported,
-               !isVideoContainer
+            // Cloud engines (Grok) never take this path — local diarizer stays local-engine-only.
+            if Self.shouldAttemptSpeakerLabels(
+                speakerLabelsEnabled: SettingsStore.shared.fileTranscriptionSpeakerLabelsEnabled,
+                isSupported: SpeakerDiarizationService.isSupported,
+                isVideoContainer: isVideoContainer,
+                isCloudEngine: SettingsStore.shared.selectedSpeechModel.isCloudEngine
+            )
             {
                 if let labeledResult = await self.transcribeFileWithSpeakerLabels(
                     fileURL,

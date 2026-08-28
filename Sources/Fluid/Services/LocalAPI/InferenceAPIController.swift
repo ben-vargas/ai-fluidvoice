@@ -56,7 +56,13 @@ final class InferenceAPIController: LocalAPIRouteHandler {
                 throw error
             }
         } catch {
-            return LocalAPI.error(error.localizedDescription, status: 400)
+            return LocalAPI.error(
+                GrokSTTCloudUploadCopy.localAPIErrorMessage(
+                    error,
+                    isCloudEngine: SettingsStore.shared.selectedSpeechModel.isCloudEngine
+                ),
+                status: 400
+            )
         }
     }
 

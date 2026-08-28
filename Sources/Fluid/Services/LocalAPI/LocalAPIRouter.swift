@@ -21,6 +21,7 @@ final class LocalAPIRouter {
         self.register(method: "POST", path: "/v1/dictionary/custom-words", handler: dictionary)
 
         let inference = InferenceAPIController()
+        // `/v1/transcribe` uses the selected voice engine. Grok Speech sends audio to xAI.
         self.register(method: "POST", path: "/v1/transcribe", handler: inference)
         self.register(method: "POST", path: "/v1/postprocess", handler: inference)
     }

@@ -19,6 +19,7 @@ struct MeetingTranscriptionView: View {
     @State private var exportResult: TranscriptionResult?
     @State private var exportFormat: ExportFormat = .text
     @State private var showingCopyConfirmation = false
+    @State private var showingGrokCloudConfirm = false
     @State private var isDropTargeted = false
     @State private var dropErrorMessage: String?
 
@@ -170,59 +171,65 @@ struct MeetingTranscriptionView: View {
                         )
                 )
 
-                // Speaker labeling options (unavailable on Intel Macs)
+                // Speaker labeling options (unavailable on Intel Macs and cloud engines)
                 if SpeakerDiarizationService.isSupported {
-                    VStack(spacing: 10) {
-                        Toggle(isOn: self.$settings.fileTranscriptionSpeakerLabelsEnabled) {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text("Label speakers")
-                                    .font(.subheadline)
+                    if self.settings.selectedSpeechModel.isCloudEngine {
+                        self.grokSpeakerLabelsUnavailableNotice
+                    } else {
+                        VStack(spacing: 10) {
+                            Toggle(isOn: self.$settings.fileTranscriptionSpeakerLabelsEnabled) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("Label speakers")
+                                        .font(.subheadline)
 
-                                Text(self.selectedFileIsVideo
-                                    ? "Available for audio files only"
-                                    : "Identify who said what (downloads speaker models on first use)")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        .toggleStyle(.switch)
-                        .disabled(self.selectedFileIsVideo)
-
-                        if self.settings.fileTranscriptionSpeakerLabelsEnabled, !self.selectedFileIsVideo {
-                            HStack {
-                                Text("Number of speakers")
-                                    .font(.subheadline)
-
-                                Spacer()
-
-                                Picker("", selection: self.$settings.fileTranscriptionExpectedSpeakerCount) {
-                                    Text("Auto").tag(0)
-                                    ForEach(2...8, id: \.self) { count in
-                                        Text("\(count)").tag(count)
-                                    }
+                                    Text(self.selectedFileIsVideo
+                                        ? "Available for audio files only"
+                                        : "Identify who said what (downloads speaker models on first use)")
+                                        .font(.caption)
+                                        .foregroundColor(.secondary)
                                 }
-                                .pickerStyle(.menu)
-                                .labelsHidden()
-                                .frame(width: 90)
+                            }
+                            .toggleStyle(.switch)
+                            .disabled(self.selectedFileIsVideo)
+
+                            if self.settings.fileTranscriptionSpeakerLabelsEnabled, !self.selectedFileIsVideo {
+                                HStack {
+                                    Text("Number of speakers")
+                                        .font(.subheadline)
+
+                                    Spacer()
+
+                                    Picker("", selection: self.$settings.fileTranscriptionExpectedSpeakerCount) {
+                                        Text("Auto").tag(0)
+                                        ForEach(2...8, id: \.self) { count in
+                                            Text("\(count)").tag(count)
+                                        }
+                                    }
+                                    .pickerStyle(.menu)
+                                    .labelsHidden()
+                                    .frame(width: 90)
+                                }
                             }
                         }
+                        .padding()
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(self.theme.palette.cardBackground)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                        .stroke(self.theme.palette.cardBorder.opacity(0.5), lineWidth: 1)
+                                )
+                        )
                     }
-                    .padding()
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(self.theme.palette.cardBackground)
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(self.theme.palette.cardBorder.opacity(0.5), lineWidth: 1)
-                            )
-                    )
+                }
+
+                if self.settings.selectedSpeechModel.isCloudEngine {
+                    self.grokCloudUploadNotice(isVideo: self.selectedFileIsVideo)
                 }
 
                 // Transcribe Button
                 Button(action: {
-                    Task {
-                        await self.transcribeFile()
-                    }
+                    self.beginTranscription()
                 }) {
                     HStack {
                         Image(systemName: "waveform")
@@ -272,6 +279,19 @@ struct MeetingTranscriptionView: View {
                     self.handleDrop(providers: providers)
                 }
             }
+        }
+        .alert(
+            self.selectedFileIsVideo ? "Send extracted audio to xAI?" : "Send this audio to xAI?",
+            isPresented: self.$showingGrokCloudConfirm
+        ) {
+            Button("Send to xAI") {
+                Task {
+                    await self.transcribeFile()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(GrokSTTCloudUploadCopy.meetingNotice(isVideo: self.selectedFileIsVideo))
         }
         .fileImporter(
             isPresented: self.$showingFilePicker,
@@ -655,6 +675,17 @@ struct MeetingTranscriptionView: View {
         return true
     }
 
+    private func beginTranscription() {
+        guard self.selectedFileURL != nil else { return }
+        if self.settings.selectedSpeechModel.isCloudEngine {
+            self.showingGrokCloudConfirm = true
+            return
+        }
+        Task {
+            await self.transcribeFile()
+        }
+    }
+
     private func transcribeFile() async {
         guard let fileURL = selectedFileURL else { return }
 
@@ -663,6 +694,48 @@ struct MeetingTranscriptionView: View {
         } catch {
             DebugLogger.shared.error("Transcription error: \(error)", source: "MeetingTranscriptionView")
         }
+    }
+
+    private var grokSpeakerLabelsUnavailableNotice: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "person.2.slash")
+                .foregroundColor(.secondary)
+            Text(GrokSTTCloudUploadCopy.speakerLabelsUnavailable)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(self.theme.palette.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(self.theme.palette.cardBorder.opacity(0.5), lineWidth: 1)
+                )
+        )
+    }
+
+    private func grokCloudUploadNotice(isVideo: Bool) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "icloud.fill")
+                .foregroundColor(.orange)
+            Text(GrokSTTCloudUploadCopy.meetingNotice(isVideo: isVideo))
+                .font(.caption)
+                .foregroundColor(.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(self.theme.palette.cardBackground)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        .stroke(Color.orange.opacity(0.4), lineWidth: 1)
+                )
+        )
     }
 
     private func formatFileSize(fileURL: URL) -> String {
