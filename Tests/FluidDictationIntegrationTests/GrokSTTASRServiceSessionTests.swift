@@ -33,6 +33,56 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         XCTAssertEqual(asr.lastStopOutcome, .success)
     }
 
+    func testLocalStartDuringCancelDoesNotStealSharedCapture() async {
+        let session = GrokSTTFakeSession(
+            configuration: .init(createdDelay: 0, blockAppend: true, holdAppendAcrossCancel: true)
+        )
+        let asr = ASRService()
+        asr.testBypassHardwareCapture = true
+        asr.testTranscriptionProviderOverride = makeGrokSTTProvider(session: session)
+        asr.testStreamingSessionFactory = { _ in session }
+
+        let startOutcome = await asr.start()
+        XCTAssertEqual(startOutcome, .started)
+        let grokPCM = [Float](repeating: 0.2, count: 1_600)
+        asr.debugAppendPCM(grokPCM)
+        let blocked = await waitUntil(timeout: 1) { session.isAppendBlocked }
+        XCTAssertTrue(blocked)
+        XCTAssertEqual(asr.debugAudioBufferCount, grokPCM.count)
+
+        let cancelTask = Task { await asr.stopWithoutTranscription() }
+        let reserved = await waitUntil(timeout: 1) {
+            asr.isRunning == false && asr.debugSessionStopOwnsSharedCapture
+        }
+        XCTAssertTrue(reserved)
+        XCTAssertTrue(asr.debugSessionOwnerLive)
+        XCTAssertTrue(asr.isRecordingStartBlocked)
+
+        let local = StubLocalTranscriptionProvider()
+        asr.testTranscriptionProviderOverride = local
+        asr.testStreamingSessionFactory = nil
+        let localStart = await asr.start()
+        XCTAssertEqual(localStart, .alreadyActive)
+        XCTAssertEqual(asr.debugAudioBufferCount, grokPCM.count)
+        XCTAssertTrue(asr.debugActiveStreamingSession === session)
+
+        session.unblockAppend()
+        await cancelTask.value
+        XCTAssertEqual(asr.debugAudioBufferCount, 0)
+        XCTAssertFalse(asr.debugSessionOwnerLive)
+        XCTAssertFalse(asr.debugSessionStopOwnsSharedCapture)
+        XCTAssertFalse(asr.isRecordingStartBlocked)
+
+        let localStartAfterCancel = await asr.start()
+        XCTAssertEqual(localStartAfterCancel, .started)
+        let localPCM = [Float](repeating: 0.9, count: 800)
+        asr.debugAppendPCM(localPCM)
+        XCTAssertEqual(asr.debugAudioBufferCount, localPCM.count)
+        XCTAssertEqual(session.cancelCallCount, 1)
+        await asr.stopWithoutTranscription()
+        XCTAssertEqual(asr.debugAudioBufferCount, 0)
+    }
+
     func testCancelDuringPumpAwaitsPumpBeforeClearingBuffer() async {
         let session = GrokSTTFakeSession(configuration: .init(createdDelay: 0, blockAppend: true))
         let provider = makeGrokSTTProvider(session: session)
@@ -476,6 +526,57 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         XCTAssertEqual(asr.lastStopOutcome, .success)
     }
 
+    func testEngineSwitchDuringRecordingKeepsCloudOverlayAndPartials() async {
+        let session = GrokSTTFakeSession(
+            configuration: .init(createdDelay: 0, transcriptOnFinish: "kept")
+        )
+        let grok = makeGrokSTTProvider(session: session)
+        let asr = ASRService()
+        asr.testBypassHardwareCapture = true
+        asr.testTranscriptionProviderOverride = grok
+        asr.testStreamingSessionFactory = { _ in session }
+
+        let startOutcome = await asr.start()
+        XCTAssertEqual(startOutcome, .started)
+        asr.debugAppendPCM([Float](repeating: 0.1, count: 1_600))
+        _ = await waitUntil(timeout: 1) { asr.debugCreatedReceived }
+        session.recordPartial(start: 0, text: "live partial")
+        let sawPartial = await waitUntil(timeout: 1) { asr.partialTranscription.isEmpty == false }
+        XCTAssertTrue(sawPartial)
+        let livePartial = asr.partialTranscription
+
+        asr.testTranscriptionProviderOverride = StubLocalTranscriptionProvider()
+        asr.testStreamingSessionFactory = nil
+        asr.resetTranscriptionProvider()
+
+        XCTAssertTrue(asr.debugIsSessionDictation)
+        XCTAssertTrue(asr.debugSessionOwnerLive)
+        XCTAssertTrue(asr.isCloudSessionActive)
+        XCTAssertEqual(asr.partialTranscription, livePartial)
+        XCTAssertFalse(
+            DictationOverlayStopPolicy.shouldHideOverlayOnStop(
+                isNormalRoute: true,
+                wasRewriteMode: false,
+                wasCommandMode: false,
+                isPromptTestActive: false,
+                shouldUseAIOnStop: false,
+                spokenSendEnabled: false,
+                isCloudSessionActive: asr.isCloudSessionActive,
+                hasPendingSTTRetry: asr.hasPendingSTTRetry
+            )
+        )
+        XCTAssertTrue(
+            DictationStopRoutingPolicy.shouldKeepLiveTranscriptOnStop(
+                isCloudSessionActive: asr.isCloudSessionActive,
+                partialTranscription: asr.partialTranscription
+            )
+        )
+
+        let text = await asr.stop()
+        XCTAssertEqual(text, ASRService.applySpokenPunctuationFormatting("kept"))
+        XCTAssertFalse(asr.debugSessionOwnerLive)
+    }
+
     func testResetDuringStopDoesNotFallBackToLocalProvider() async {
         let session = GrokSTTFakeSession(
             configuration: .init(finishDelay: 0.35, failBeforeAudioDone: .timeout)
@@ -566,7 +667,7 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         XCTAssertFalse(asr.hasPendingSTTRetry)
     }
 
-    func testSlowStopDoesNotCancelNewerStreamingSession() async {
+    func testStartBlockedUntilSessionFinalized() async {
         let park = TestLatch()
         let sessionA = GrokSTTFakeSession(
             configuration: .init(transcriptOnFinish: "from-a", finishPark: park)
@@ -584,23 +685,28 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let stopA = Task { await asr.stop() }
         let enteredFinish = await waitUntil(timeout: 1) { sessionA.finishCallCount > 0 }
         XCTAssertTrue(enteredFinish)
+        XCTAssertTrue(asr.debugSessionOwnerLive)
+        XCTAssertFalse(asr.debugSessionStopOwnsSharedCapture)
+        XCTAssertTrue(asr.isRecordingStartBlocked)
 
         let sessionB = GrokSTTFakeSession(configuration: .init(transcriptOnFinish: "from-b"))
         asr.testTranscriptionProviderOverride = makeGrokSTTProvider(session: sessionB)
         asr.testStreamingSessionFactory = { _ in sessionB }
         let startB = await asr.start()
-        XCTAssertEqual(startB, .started)
-        XCTAssertTrue(asr.debugActiveStreamingSession === sessionB)
-        XCTAssertTrue(asr.isRunning)
+        XCTAssertEqual(startB, .alreadyActive)
+        XCTAssertTrue(asr.debugActiveStreamingSession === sessionA)
+        XCTAssertFalse(asr.isRunning)
 
         park.resume()
         let textA = await stopA.value
         XCTAssertEqual(textA, ASRService.applySpokenPunctuationFormatting("from-a"))
+        XCTAssertFalse(asr.debugSessionOwnerLive)
+        XCTAssertFalse(asr.isRecordingStartBlocked)
+
+        let startBAfterFinalized = await asr.start()
+        XCTAssertEqual(startBAfterFinalized, .started)
         XCTAssertTrue(asr.debugActiveStreamingSession === sessionB)
         XCTAssertEqual(sessionB.cancelCallCount, 0)
-        XCTAssertTrue(asr.isRunning)
-        XCTAssertEqual(sessionB.finishCallCount, 0)
-
         asr.debugAppendPCM([Float](repeating: 0.2, count: 1_600))
         let textB = await asr.stop()
         XCTAssertEqual(textB, ASRService.applySpokenPunctuationFormatting("from-b"))

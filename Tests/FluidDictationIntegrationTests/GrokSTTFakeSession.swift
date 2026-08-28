@@ -1,5 +1,6 @@
 @testable import FluidVoice_Debug
 import Foundation
+import XCTest
 
 /// In-memory streaming session for unit tests. Production `GrokSTTProvider` must not return this.
 final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unchecked Sendable {
@@ -26,8 +27,10 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
         var startUntilCancelled: Bool = false
         /// Enter `streaming` before `createdDelay` elapses so stop can race the created gate.
         var enterStreamingBeforeReturn: Bool = false
-        /// Park `finish()` after it has been entered so a newer recording can start.
+        /// Park `finish()` after it has been entered so tests can observe start-blocked finalization.
         var finishPark: TestLatch? = nil
+        /// Keep `blockAppend` held across `cancel()` so tests can observe cancel ownership.
+        var holdAppendAcrossCancel: Bool = false
     }
 
     private let lock = NSLock()
@@ -87,7 +90,11 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
         self.lock.withLock { self.queuedCount = count }
     }
 
-    func start() async throws {
+    @concurrent func start() async throws {
+        XCTAssertFalse(
+            Thread.isMainThread,
+            "StreamingTranscriptionSession.start() must run off the main thread"
+        )
         self.lock.withLock {
             if self.state == .idle {
                 self.state = .waitCreated
@@ -155,7 +162,7 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
 
         if shouldBlock {
             while true {
-                if Task.isCancelled { break }
+                if Task.isCancelled, !self.configuration.holdAppendAcrossCancel { break }
                 let stillBlocked = self.lock.withLock { self.appendBlocked }
                 if !stillBlocked { break }
                 Thread.sleep(forTimeInterval: 0.005)
@@ -179,7 +186,11 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
         }
     }
 
-    func finish() async throws -> String {
+    @concurrent func finish() async throws -> String {
+        XCTAssertFalse(
+            Thread.isMainThread,
+            "StreamingTranscriptionSession.finish() must run off the main thread"
+        )
         self.lock.withLock { self.finishCallCount += 1 }
 
         if self.configuration.neverCreated {
@@ -245,7 +256,9 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
             self.createdContinuation = nil
             continuation?.resume(throwing: GrokSTTError.cancelled)
         }
-        self.unblockAppend()
+        if !self.configuration.holdAppendAcrossCancel {
+            self.unblockAppend()
+        }
     }
 
     func recordPartial(start: Double, text: String) {

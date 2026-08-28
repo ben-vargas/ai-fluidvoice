@@ -2,6 +2,15 @@
 import XCTest
 
 final class GrokSTTFakeSessionTests: XCTestCase {
+    @MainActor
+    func testStartAndFinishRunOffMainActorWhenCalledFromMainActor() async throws {
+        let session = GrokSTTFakeSession(configuration: .init(transcriptOnFinish: "off-main"))
+        try await session.start()
+        session.handoffUnsentPCM([Float](repeating: 0.1, count: 1_600))
+        let text = try await session.finish()
+        XCTAssertEqual(text, "off-main")
+    }
+
     func testCancelDoesNotSendAudioDone() async throws {
         let session = GrokSTTFakeSession()
         try await session.start()

@@ -207,6 +207,12 @@ final class ASRService: ObservableObject {
         self.isRunning || self.isStarting
     }
 
+    /// True while a Grok session still owns capture or is finalizing stop/cancel.
+    /// New recordings must not start in this window.
+    var isRecordingStartBlocked: Bool {
+        self.isRunningOrStarting || self.sessionOwnerLive || self.sessionStopOwnsSharedCapture
+    }
+
     private let audioCaptureReadinessGate = AudioCaptureReadinessGate()
     private let firstPCMTimeoutNanoseconds: UInt64 = 2_000_000_000
     private var audioCaptureStartGeneration: UInt64 = 0
@@ -296,7 +302,10 @@ final class ASRService: ObservableObject {
     #endif
 
     var isCloudSessionActive: Bool {
-        self.transcriptionProvider is StreamingTranscriptionProviding
+        if self.sessionOwnerLive || self.isSessionDictation {
+            return true
+        }
+        return self.transcriptionProvider is StreamingTranscriptionProviding
             && (self.isRunning || self.isStarting || self.activeStreamingSession != nil)
     }
 
@@ -1806,9 +1815,9 @@ final class ASRService: ObservableObject {
     ) async -> AudioCaptureStartOutcome {
         DebugLogger.shared.info("🎤 START() called - beginning recording session", source: "ASRService")
 
-        guard self.sessionStopOwnsSharedCapture == false else {
+        guard self.isRecordingStartBlocked == false else {
             DebugLogger.shared.warning(
-                "⚠️ START() blocked - previous session still draining capture",
+                "⚠️ START() blocked - previous session still draining or finalizing",
                 source: "ASRService"
             )
             return .alreadyActive
@@ -2899,6 +2908,9 @@ final class ASRService: ObservableObject {
         // CRITICAL: Set isRunning to false FIRST to signal any in-flight chunks to abort early
         self.isRunning = false
         self.sessionPumpGate.requestStop()
+        if self.sessionOwnerLive || self.isSessionDictation {
+            self.sessionStopOwnsSharedCapture = true
+        }
         let sessionStop = self.makeStreamingSessionStopIdentity()
         self.audioCapturePipeline.setRecordingEnabled(false)
 
@@ -2926,7 +2938,6 @@ final class ASRService: ObservableObject {
             originatingPumpTask: sessionStop.pumpTask,
             clearRetry: true
         )
-        self.endSessionOwner(generation: sessionStop.generation)
 
         if ownsSession {
             self.audioBuffer.clear()
@@ -2938,6 +2949,10 @@ final class ASRService: ObservableObject {
             self.skipNextChunk = false
             self.refreshWordBoostStatus()
         }
+        if self.sessionOwnerGeneration == sessionStop.generation {
+            self.sessionStopOwnsSharedCapture = false
+        }
+        self.endSessionOwner(generation: sessionStop.generation)
 
         // Resume media playback if we paused it
         if shouldResumeMedia {
@@ -4872,7 +4887,7 @@ final class ASRService: ObservableObject {
             await GrokSTTSessionPump.run(audioBuffer: audioBuffer, gate: gate, session: session)
         }
 
-        self.sessionStartTask = Task { [weak self, session, generation] in
+        self.sessionStartTask = Task.detached { [weak self, session, generation, gate] in
             do {
                 try await session.start()
                 try Task.checkCancellation()
@@ -4985,7 +5000,9 @@ final class ASRService: ObservableObject {
 
         let text: String
         do {
-            text = try await session.finish()
+            text = try await Task.detached { [session] in
+                try await session.finish()
+            }.value
         } catch {
             // Pre-`audio.done` drops are retryable. Post-done transport failures
             // with text must return that text from `finish()` itself (Quill).
@@ -5328,12 +5345,10 @@ final class ASRService: ObservableObject {
         forDictionaryTraining: Bool,
         onCaptureStarted: (@MainActor () -> Void)?
     ) async -> AudioCaptureStartOutcome {
-        guard self.sessionStopOwnsSharedCapture == false,
-              self.isRunning == false,
-              self.isStarting == false,
+        guard self.isRecordingStartBlocked == false,
               self.isTerminating == false
         else {
-            return self.sessionStopOwnsSharedCapture || self.isRunning || self.isStarting ? .alreadyActive : .failed
+            return self.isRecordingStartBlocked ? .alreadyActive : .failed
         }
         self.isStarting = true
         defer { self.finishAudioCaptureStart() }

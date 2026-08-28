@@ -38,7 +38,7 @@ nonisolated protocol StreamingTranscriptionSession: AnyObject {
 
     /// Connect + wait for `transcript.created`. Safe to call off-main.
     /// Does not send audio. Reconnects once on HTTP-upgrade 401 (CLI alternate Bearer).
-    func start() async throws
+    @concurrent func start() async throws
 
     /// Enqueue a binary PCM16 LE frame (non-blocking). Legal **only in `streaming`**
     /// (`transcript.created` received, `finish`/`cancel` not yet called).
@@ -56,7 +56,7 @@ nonisolated protocol StreamingTranscriptionSession: AnyObject {
     /// assembled text = success). Returns assembled / server text. Throws if nothing produced.
     /// Never reads `ASRService.audioBuffer`. If `handoffUnsentPCM` was called, send that
     /// copy from sample 0 after `created`, then `audio.done`.
-    func finish() async throws -> String
+    @concurrent func finish() async throws -> String
 
     /// Drop the socket. Do not send `audio.done`. Idempotent. Does not wait for close.
     func cancel()

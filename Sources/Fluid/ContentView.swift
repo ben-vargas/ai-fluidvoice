@@ -216,6 +216,7 @@ struct ContentView: View {
     @State private var activeRecordingMode: ActiveRecordingMode = .none
     @State private var pendingAIReprocessText: String? = nil
     @State private var pendingSTTRetryContext: DictationStopRoutingContext?
+    @State private var isProcessingDictationStop = false
     @State private var activeShortcutRecordingTarget: ShortcutRecordingTarget? = nil
     @State private var currentRecordingModifierKeyCodes: Set<UInt16> = []
     @State private var pendingModifierKeyCodes: Set<UInt16> = []
@@ -2380,6 +2381,8 @@ struct ContentView: View {
     // MARK: - Stop and Process Transcription
 
     private func stopAndProcessTranscription(route: DictationOutputRoute = .normal) async {
+        self.isProcessingDictationStop = true
+        defer { self.isProcessingDictationStop = false }
         DebugLogger.shared.debug("stopAndProcessTranscription called", source: "ContentView")
         DebugLogger.shared.info("Output route selected: \(route.rawValue)", source: "ContentView")
         self.appBench("stop_path_enter route=\(route.rawValue)")
@@ -2510,21 +2513,20 @@ struct ContentView: View {
         context: DictationStopRoutingContext,
         didRequestOverlayHideOnStop: Bool
     ) async {
-        let dispatch = DictationSuccessfulStopDispatch(
-            transcribedText: transcribedText,
-            audioSnapshot: audioSnapshot,
-            context: context,
-            didRequestOverlayHideOnStop: didRequestOverlayHideOnStop
-        )
-        switch dispatch.intent {
+        switch DictationStopRoutingPolicy.intent(for: context) {
         case .promptTest:
-            await self.handlePromptTestSuccessfulStop(transcribedText: dispatch.transcribedText)
+            await self.handlePromptTestSuccessfulStop(transcribedText: transcribedText)
         case .rewrite:
-            await self.handleRewriteSuccessfulStop(transcribedText: dispatch.transcribedText)
+            await self.handleRewriteSuccessfulStop(transcribedText: transcribedText)
         case .command:
-            await self.handleCommandSuccessfulStop(transcribedText: dispatch.transcribedText)
+            await self.handleCommandSuccessfulStop(transcribedText: transcribedText)
         case .dictation:
-            await self.handleDictationSuccessfulStop(dispatch)
+            await self.handleDictationSuccessfulStop(
+                transcribedText: transcribedText,
+                audioSnapshot: audioSnapshot,
+                context: context,
+                didRequestOverlayHideOnStop: didRequestOverlayHideOnStop
+            )
         }
     }
 
@@ -2590,12 +2592,12 @@ struct ContentView: View {
         await self.processCommandWithVoice(transcribedText)
     }
 
-    private func handleDictationSuccessfulStop(_ dispatch: DictationSuccessfulStopDispatch) async {
-        let transcribedText = dispatch.transcribedText
-        let audioSnapshot = dispatch.audioSnapshot
-        let context = dispatch.context
-        let didRequestOverlayHideOnStop = dispatch.didRequestOverlayHideOnStop
-
+    private func handleDictationSuccessfulStop(
+        transcribedText: String,
+        audioSnapshot: DictationAudioSnapshot?,
+        context: DictationStopRoutingContext,
+        didRequestOverlayHideOnStop: Bool
+    ) async {
         if NotchOverlayManager.shared.isBottomOverlayVisible {
             BottomOverlayWindowController.shared.beginReleaseTransition()
         }
@@ -3604,6 +3606,10 @@ struct ContentView: View {
         DebugLogger.shared.info("Command processed, conversation stored in Command Mode", source: "ContentView")
     }
 
+    private var shouldIgnoreDictationStart: Bool {
+        self.asr.isRecordingStartBlocked || self.isProcessingDictationStop
+    }
+
     /// Capture app context at start to avoid mismatches if the user switches apps mid-session
     private func startRecording() {
         let model = SettingsStore.shared.selectedSpeechModel
@@ -3611,7 +3617,7 @@ struct ContentView: View {
             "ContentView: startRecording() for model=\(model.displayName), supportsStreaming=\(model.supportsStreaming)",
             source: "ContentView"
         )
-        guard !self.asr.isRunningOrStarting else {
+        guard !self.shouldIgnoreDictationStart else {
             DebugLogger.shared.debug("ContentView: start ignored because capture is already active", source: "ContentView")
             return
         }
@@ -3900,7 +3906,7 @@ struct ContentView: View {
                 // Set overlay mode to command
                 self.menuBarManager.setOverlayMode(.command)
 
-                guard !self.asr.isRunningOrStarting else { return }
+                guard !self.shouldIgnoreDictationStart else { return }
 
                 self.advanceOverlayLifecycle()
 
@@ -3947,7 +3953,7 @@ struct ContentView: View {
                 // Set flag so stopAndProcessTranscription knows to process as rewrite
                 self.setActiveRecordingMode(.edit)
 
-                guard !self.asr.isRunningOrStarting else { return }
+                guard !self.shouldIgnoreDictationStart else { return }
 
                 self.advanceOverlayLifecycle()
 
@@ -4295,7 +4301,7 @@ extension ContentView {
         self.setActiveRecordingMode(mode)
         self.rewriteModeService.clearState()
 
-        guard !self.asr.isRunningOrStarting else {
+        guard !self.shouldIgnoreDictationStart else {
             self.appBench("asr_start_skipped reason=already_running_or_starting")
             return
         }
@@ -5199,13 +5205,4 @@ enum DictationStopRoutingPolicy {
     }
 }
 
-struct DictationSuccessfulStopDispatch {
-    let transcribedText: String
-    let audioSnapshot: DictationAudioSnapshot?
-    let context: DictationStopRoutingContext
-    let didRequestOverlayHideOnStop: Bool
 
-    var intent: DictationSuccessfulStopIntent {
-        DictationStopRoutingPolicy.intent(for: self.context)
-    }
-}
