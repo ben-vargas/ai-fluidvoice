@@ -301,3 +301,9 @@ Blocking/major/specViolation items applied in this round:
 
 - **Engine card subtitle says "Not active" next to the green Active badge** (`Sources/Fluid/UI/AISettingsView+SpeechRecognition.swift`). Same as round 5: `speechModelSubtitle(for: .grokSTT)` returns "· Not active" regardless of activation state while the row shows the Active capsule. Suggested: make the subtitle state-aware and let the badge own activation state.
 - **No bound on outbound send while `finish()` waits for `audio.done`** (`Sources/Fluid/Services/GrokSTT/GrokSTTWebSocketSession.swift`). After stop, `sendAudioDone` waits for the serialized sender to drain every queued frame before the `audio.done` text send resolves, with no overall deadline; a stalled `send(data:)` defers to the transport's own timeout. Bounded in practice by the pump's 20-frame queue pause plus URLSession timeouts. Suggested: if this ever bites, wrap the drain in a deadline that fails the session as pre-done (retryable).
+
+## PR3b round 1
+
+- **Active engine still says “Not active”** (`Sources/Fluid/UI/AISettingsView+SpeechRecognition.swift`). When Grok is selected, the row shows the green Active badge but speechModelSubtitle always returns “Grok Speech (xAI) · Not active” once credentials exist (lines 770–778). Suggested: make the subtitle activation-aware or remove the activation state from the subtitle.
+
+- **Outbound drain before audio.done has no explicit deadline** (`Sources/Fluid/Services/GrokSTT/GrokSTTWebSocketSession.swift`). finish() starts its three-second completion timeout only after sendAudioDone returns. That continuation waits behind all queued frames, so a stalled frame send can prolong stop until the transport times out. Suggested: bound the pre-audio.done drain and treat expiry as a retryable pre-done failure.
