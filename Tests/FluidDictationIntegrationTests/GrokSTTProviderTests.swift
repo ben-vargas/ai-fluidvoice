@@ -63,7 +63,7 @@ final class GrokSTTProviderTests: XCTestCase {
 
     func testTranscriptionExecutorDoesNotHopMainActor() async throws {
         let provider = makeGrokSTTProvider()
-        provider.setRestFinalHandler { samples in
+        provider.setRestFinalHandler { samples, _ in
             XCTAssertFalse(Thread.isMainThread, "transcribeFinal must not hop to MainActor")
             XCTAssertEqual(samples.count, 1)
             return ASRTranscriptionResult(text: "ok", confidence: 1)

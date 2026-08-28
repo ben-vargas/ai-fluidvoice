@@ -85,7 +85,7 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let provider = makeGrokSTTProvider(configured: false)
         provider.setSessionFactory { _ in throw GrokSTTError.offline }
         let restCalls = TestCounter()
-        provider.setRestFinalHandler { _ in
+        provider.setRestFinalHandler { _, _ in
             restCalls.increment()
             return ASRTranscriptionResult(text: "should-not-run", confidence: 1)
         }
@@ -123,7 +123,7 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
     func testMakeStreamingSessionThrowRESTWhenCredentialExists() async {
         let provider = makeGrokSTTProvider(configured: true)
         provider.setSessionFactory { _ in throw GrokSTTError.timeout }
-        provider.setRestFinalHandler { samples in
+        provider.setRestFinalHandler { samples, _ in
             XCTAssertEqual(samples.count, 800)
             return ASRTranscriptionResult(text: "rested", confidence: 1)
         }
@@ -143,7 +143,7 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
     func testPreDoneDropDoesNotInsertAssemblerPartials() async {
         let session = GrokSTTFakeSession(configuration: .init(createdDelay: 0, transcriptOnFinish: "partial"))
         let provider = makeGrokSTTProvider(configured: true, session: session)
-        provider.setRestFinalHandler { _ in
+        provider.setRestFinalHandler { _, _ in
             throw GrokSTTError.offline
         }
         let asr = ASRService()
@@ -169,7 +169,7 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
             configuration: .init(createdDelay: 0, failBeforeAudioDone: .socketClosed(code: 1006))
         )
         let provider = makeGrokSTTProvider(configured: true, session: session)
-        provider.setRestFinalHandler { _ in throw GrokSTTError.offline }
+        provider.setRestFinalHandler { _, _ in throw GrokSTTError.offline }
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = provider
@@ -198,7 +198,7 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         )
         let grok = makeGrokSTTProvider(configured: true, session: session)
         let grokREST = TestCounter()
-        grok.setRestFinalHandler { samples in
+        grok.setRestFinalHandler { samples, _ in
             grokREST.increment()
             XCTAssertEqual(samples.count, 1_600)
             return ASRTranscriptionResult(text: "grok-rest", confidence: 1)
@@ -230,7 +230,7 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
             configuration: .init(failBeforeAudioDone: .offline)
         )
         let grok = makeGrokSTTProvider(configured: true, session: session)
-        grok.setRestFinalHandler { _ in throw GrokSTTError.offline }
+        grok.setRestFinalHandler { _, _ in throw GrokSTTError.offline }
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = grok
@@ -255,7 +255,7 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
             configuration: .init(failBeforeAudioDone: .offline)
         )
         let grok = makeGrokSTTProvider(configured: true, session: session)
-        grok.setRestFinalHandler { _ in throw GrokSTTError.offline }
+        grok.setRestFinalHandler { _, _ in throw GrokSTTError.offline }
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = grok
@@ -297,7 +297,7 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
             configuration: .init(failBeforeAudioDone: .offline)
         )
         let grok = makeGrokSTTProvider(configured: true, session: session)
-        grok.setRestFinalHandler { _ in throw GrokSTTError.offline }
+        grok.setRestFinalHandler { _, _ in throw GrokSTTError.offline }
         let asr = ASRService()
         asr.testBypassHardwareCapture = true
         asr.testTranscriptionProviderOverride = grok
@@ -334,7 +334,10 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         session.setQueuedAudioFrameCount(0)
         let text = await asr.stop()
         XCTAssertEqual(text, ASRService.applySpokenPunctuationFormatting("framed"))
-        XCTAssertEqual(session.handoffCallCount, 0)
+        // Pump sent nothing, so stop hands the entire utterance and finish()
+        // still emits exact 100 ms / 1600-sample frames.
+        XCTAssertEqual(session.handoffCallCount, 1)
+        XCTAssertEqual(session.handoffPCM, pcm)
         XCTAssertEqual(session.appendedFrames.map(\.count), [3_200, 3_200, 1_600])
         XCTAssertEqual(session.appendedSampleCount, pcm.count)
     }
@@ -368,6 +371,208 @@ final class GrokSTTASRServiceSessionTests: XCTestCase {
         let text = await asr.stop()
         XCTAssertEqual(text, ASRService.applySpokenPunctuationFormatting("new"))
         XCTAssertEqual(asr.lastStopOutcome, .success)
+    }
+
+    func testResetDuringStopDoesNotFallBackToLocalProvider() async {
+        let session = GrokSTTFakeSession(
+            configuration: .init(finishDelay: 0.35, failBeforeAudioDone: .timeout)
+        )
+        let grok = makeGrokSTTProvider(configured: true, session: session)
+        let grokREST = TestCounter()
+        grok.setRestFinalHandler { samples, _ in
+            grokREST.increment()
+            XCTAssertEqual(samples.count, 1_600)
+            return ASRTranscriptionResult(text: "grok-rest", confidence: 1)
+        }
+        let local = StubLocalTranscriptionProvider()
+        local.transcribeFinalText = "LOCAL"
+
+        let asr = ASRService()
+        asr.testBypassHardwareCapture = true
+        asr.testTranscriptionProviderOverride = grok
+        asr.testStreamingSessionFactory = { _ in session }
+        let startOutcome = await asr.start()
+        XCTAssertEqual(startOutcome, .started)
+        asr.debugAppendPCM([Float](repeating: 0.1, count: 1_600))
+        _ = await waitUntil(timeout: 1) { asr.debugCreatedReceived }
+
+        let stopTask = Task { await asr.stop() }
+        let enteredFinish = await waitUntil(timeout: 1) { session.finishCallCount > 0 }
+        XCTAssertTrue(enteredFinish)
+        XCTAssertTrue(asr.debugSessionOwnerLive)
+
+        asr.testTranscriptionProviderOverride = local
+        asr.testStreamingSessionFactory = nil
+        asr.resetTranscriptionProvider()
+        XCTAssertTrue(asr.debugIsSessionDictation)
+        XCTAssertNotNil(asr.debugSessionGrokProvider)
+
+        let text = await stopTask.value
+        XCTAssertEqual(local.transcribeFinalCount, 0)
+        XCTAssertEqual(grokREST.count, 1)
+        XCTAssertEqual(text, ASRService.applySpokenPunctuationFormatting("grok-rest"))
+        XCTAssertFalse(asr.debugSessionOwnerLive)
+    }
+
+    func testResetDuringFailedStopKeepsRetainedRetry() async {
+        let session = GrokSTTFakeSession(
+            configuration: .init(finishDelay: 0.35, failBeforeAudioDone: .timeout)
+        )
+        let grok = makeGrokSTTProvider(configured: true, session: session)
+        grok.setRestFinalHandler { _, _ in throw GrokSTTError.offline }
+        let local = StubLocalTranscriptionProvider()
+        let asr = ASRService()
+        asr.testBypassHardwareCapture = true
+        asr.testTranscriptionProviderOverride = grok
+        asr.testStreamingSessionFactory = { _ in session }
+        let startOutcome = await asr.start()
+        XCTAssertEqual(startOutcome, .started)
+        asr.debugAppendPCM([Float](repeating: 0.1, count: 800))
+        _ = await waitUntil(timeout: 1) { asr.debugCreatedReceived }
+
+        let stopTask = Task { await asr.stop() }
+        let enteredFinish = await waitUntil(timeout: 1) { session.finishCallCount > 0 }
+        XCTAssertTrue(enteredFinish)
+        asr.testTranscriptionProviderOverride = local
+        asr.resetTranscriptionProvider()
+        let text = await stopTask.value
+        XCTAssertEqual(text, "")
+        XCTAssertEqual(local.transcribeFinalCount, 0)
+        XCTAssertTrue(asr.debugGrokRetryStore.hasPending)
+    }
+
+    func testCreatedTransitionBetweenSnapshotAndHandoffSendsEntirePCM() async {
+        let session = GrokSTTFakeSession(
+            configuration: .init(
+                createdDelay: 0.35,
+                transcriptOnFinish: "caught-up",
+                enterStreamingBeforeReturn: true
+            )
+        )
+        let provider = makeGrokSTTProvider(configured: true, session: session)
+        let restCalls = TestCounter()
+        provider.setRestFinalHandler { _, _ in
+            restCalls.increment()
+            return ASRTranscriptionResult(text: "should-not-rest", confidence: 1)
+        }
+        let asr = ASRService()
+        asr.testBypassHardwareCapture = true
+        asr.testTranscriptionProviderOverride = provider
+        asr.testStreamingSessionFactory = { _ in session }
+
+        let startOutcome = await asr.start()
+        XCTAssertEqual(startOutcome, .started)
+        XCTAssertFalse(asr.debugCreatedReceived)
+        let pcm = [Float](repeating: 0.12, count: 3_200)
+        asr.debugAppendPCM(pcm)
+
+        let streaming = await waitUntil(timeout: 1) { session.currentState == .streaming }
+        XCTAssertTrue(streaming)
+        XCTAssertFalse(asr.debugCreatedReceived)
+
+        let text = await asr.stop()
+        XCTAssertEqual(text, ASRService.applySpokenPunctuationFormatting("caught-up"))
+        XCTAssertEqual(session.handoffCallCount, 1)
+        XCTAssertEqual(session.handoffPCM, pcm)
+        XCTAssertEqual(session.appendCallCount, 0)
+        XCTAssertGreaterThanOrEqual(session.appendedSampleCount, pcm.count)
+        XCTAssertEqual(restCalls.count, 0)
+    }
+
+    func testCancelClosesSessionWithoutWaitingForStart() async {
+        let session = GrokSTTFakeSession(configuration: .init(startUntilCancelled: true))
+        let provider = makeGrokSTTProvider(session: session)
+        let asr = ASRService()
+        asr.testBypassHardwareCapture = true
+        asr.testTranscriptionProviderOverride = provider
+        asr.testStreamingSessionFactory = { _ in session }
+
+        let startOutcome = await asr.start()
+        XCTAssertEqual(startOutcome, .started)
+        asr.debugAppendPCM([Float](repeating: 0.2, count: 800))
+
+        let startedAt = Date()
+        await asr.stopWithoutTranscription()
+        XCTAssertLessThan(Date().timeIntervalSince(startedAt), 0.75)
+        XCTAssertEqual(session.cancelCallCount, 1)
+        XCTAssertFalse(session.audioDoneSent)
+        XCTAssertEqual(asr.debugAudioBufferCount, 0)
+    }
+
+    func testNeverCreatedFallsBackToFullPCMREST() async {
+        let session = GrokSTTFakeSession(
+            configuration: .init(neverCreated: true, createdTimeout: 0.05)
+        )
+        let provider = makeGrokSTTProvider(configured: true, session: session)
+        let restCalls = TestCounter()
+        let pcm = [Float](repeating: 0.18, count: 2_400)
+        provider.setRestFinalHandler { samples, _ in
+            restCalls.increment()
+            XCTAssertEqual(samples, pcm)
+            return ASRTranscriptionResult(text: "rest-from-timeout", confidence: 1)
+        }
+        let asr = ASRService()
+        asr.testBypassHardwareCapture = true
+        asr.testTranscriptionProviderOverride = provider
+        asr.testStreamingSessionFactory = { _ in session }
+
+        let startOutcome = await asr.start()
+        XCTAssertEqual(startOutcome, .started)
+        asr.debugAppendPCM(pcm)
+        let text = await asr.stop()
+
+        XCTAssertEqual(restCalls.count, 1)
+        XCTAssertFalse(session.audioDoneSent)
+        XCTAssertEqual(text, ASRService.applySpokenPunctuationFormatting("rest-from-timeout"))
+        XCTAssertFalse(asr.hasPendingSTTRetry)
+    }
+
+    func testRetryUsesRetainedLanguageAndPublishesAudioSnapshot() async {
+        let session = GrokSTTFakeSession(
+            configuration: .init(failBeforeAudioDone: .offline)
+        )
+        let grok = makeGrokSTTProvider(configured: true, session: session)
+        grok.setRestFinalHandler { _, _ in throw GrokSTTError.offline }
+
+        let previousLanguage = SettingsStore.shared.selectedGrokSTTLanguageCode
+        let previousHistory = SettingsStore.shared.saveTranscriptionHistory
+        let previousAudio = SettingsStore.shared.saveAudioWithTranscriptionHistory
+        SettingsStore.shared.selectedGrokSTTLanguageCode = "es"
+        SettingsStore.shared.saveTranscriptionHistory = true
+        SettingsStore.shared.saveAudioWithTranscriptionHistory = true
+        defer {
+            SettingsStore.shared.selectedGrokSTTLanguageCode = previousLanguage
+            SettingsStore.shared.saveTranscriptionHistory = previousHistory
+            SettingsStore.shared.saveAudioWithTranscriptionHistory = previousAudio
+        }
+
+        let asr = ASRService()
+        asr.testBypassHardwareCapture = true
+        asr.testTranscriptionProviderOverride = grok
+        asr.testStreamingSessionFactory = { _ in session }
+        let startOutcome = await asr.start()
+        XCTAssertEqual(startOutcome, .started)
+        let pcm = [Float](repeating: 0.22, count: 1_200)
+        asr.debugAppendPCM(pcm)
+        _ = await asr.stop()
+        XCTAssertTrue(asr.hasPendingSTTRetry)
+        XCTAssertEqual(asr.debugGrokRetryStore.pending?.languageCode, "es")
+
+        SettingsStore.shared.selectedGrokSTTLanguageCode = "fr"
+        var capturedLanguage: String?
+        grok.setRestFinalHandler { samples, language in
+            capturedLanguage = language
+            XCTAssertEqual(samples, pcm)
+            return ASRTranscriptionResult(text: "retried", confidence: 1)
+        }
+
+        let text = await asr.retryPendingGrokTranscription()
+        XCTAssertEqual(text, ASRService.applySpokenPunctuationFormatting("retried"))
+        XCTAssertEqual(capturedLanguage, "es")
+        let snapshot = asr.consumeLastCompletedAudioSnapshot()
+        XCTAssertEqual(snapshot?.samples, pcm)
+        XCTAssertEqual(snapshot?.sampleRate, 16_000)
+        XCTAssertEqual(snapshot?.channels, 1)
     }
 }
 

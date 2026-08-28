@@ -2510,73 +2510,88 @@ struct ContentView: View {
         context: DictationStopRoutingContext,
         didRequestOverlayHideOnStop: Bool
     ) async {
+        let dispatch = DictationSuccessfulStopDispatcher.make(
+            transcribedText: transcribedText,
+            audioSnapshot: audioSnapshot,
+            context: context,
+            didRequestOverlayHideOnStop: didRequestOverlayHideOnStop
+        )
+        await DictationSuccessfulStopDispatcher.invoke(
+            dispatch,
+            promptTest: { await self.handlePromptTestSuccessfulStop(transcribedText: $0) },
+            rewrite: { await self.handleRewriteSuccessfulStop(transcribedText: $0) },
+            command: { await self.handleCommandSuccessfulStop(transcribedText: $0) },
+            dictation: { await self.handleDictationSuccessfulStop($0) }
+        )
+    }
+
+    private func handlePromptTestSuccessfulStop(transcribedText: String) async {
         let promptTest = DictationPromptTestCoordinator.shared
+        // Prompt Test Mode: reroute dictation hotkey output into the prompt editor (no typing/clipboard/history).
+        promptTest.lastTranscriptionText = transcribedText
+        promptTest.lastOutputText = ""
+        promptTest.lastError = ""
 
-        switch DictationStopRoutingPolicy.intent(for: context) {
-        case .promptTest:
-            // Prompt Test Mode: reroute dictation hotkey output into the prompt editor (no typing/clipboard/history).
-            promptTest.lastTranscriptionText = transcribedText
-            promptTest.lastOutputText = ""
-            promptTest.lastError = ""
-
-            guard DictationAIPostProcessingGate.isProviderConfigured() else {
-                promptTest.lastError = "AI post-processing is not configured. Configure a provider/model (and API key for non-local endpoints) to test prompts."
-                self.menuBarManager.setProcessing(false)
-                return
-            }
-
-            promptTest.isProcessing = true
-            defer {
-                self.menuBarManager.setProcessing(false)
-                promptTest.isProcessing = false
-            }
-
-            do {
-                let result = try await self.processTextWithAI(transcribedText, overrideSystemPrompt: promptTest.draftPromptText)
-                let appInfo = self.recordingAppInfo ?? self.getCurrentAppInfo()
-                let literalFormattedResult = ASRService.applyDictationLiteralFormatting(
-                    result,
-                    appName: appInfo.name,
-                    bundleID: appInfo.bundleId,
-                    windowTitle: appInfo.windowTitle
-                )
-                promptTest.lastOutputText = ASRService.applyGAAVFormatting(literalFormattedResult)
-            } catch {
-                DebugLogger.shared.error("Prompt test AI call failed: \(error.localizedDescription)", source: "ContentView")
-                promptTest.lastError = error.localizedDescription
-            }
+        guard DictationAIPostProcessingGate.isProviderConfigured() else {
+            promptTest.lastError = "AI post-processing is not configured. Configure a provider/model (and API key for non-local endpoints) to test prompts."
+            self.menuBarManager.setProcessing(false)
             return
-
-        case .rewrite:
-            if NotchOverlayManager.shared.isBottomOverlayVisible {
-                BottomOverlayWindowController.shared.beginReleaseTransition()
-            }
-            DebugLogger.shared.info("Processing rewrite with instruction: \(transcribedText)", source: "ContentView")
-            AnalyticsService.shared.recordModelUsage(
-                role: .transcription,
-                mode: .edit,
-                descriptor: self.settings.selectedSpeechModel.analyticsDescriptor
-            )
-            let appInfo = self.recordingAppInfo ?? self.getCurrentAppInfo()
-            await self.processRewriteWithVoiceInstruction(transcribedText, appInfo: appInfo)
-            return
-
-        case .command:
-            if NotchOverlayManager.shared.isBottomOverlayVisible {
-                BottomOverlayWindowController.shared.beginReleaseTransition()
-            }
-            DebugLogger.shared.info("Processing command: \(transcribedText)", source: "ContentView")
-            AnalyticsService.shared.recordModelUsage(
-                role: .transcription,
-                mode: .command,
-                descriptor: self.settings.selectedSpeechModel.analyticsDescriptor
-            )
-            await self.processCommandWithVoice(transcribedText)
-            return
-
-        case .dictation:
-            break
         }
+
+        promptTest.isProcessing = true
+        defer {
+            self.menuBarManager.setProcessing(false)
+            promptTest.isProcessing = false
+        }
+
+        do {
+            let result = try await self.processTextWithAI(transcribedText, overrideSystemPrompt: promptTest.draftPromptText)
+            let appInfo = self.recordingAppInfo ?? self.getCurrentAppInfo()
+            let literalFormattedResult = ASRService.applyDictationLiteralFormatting(
+                result,
+                appName: appInfo.name,
+                bundleID: appInfo.bundleId,
+                windowTitle: appInfo.windowTitle
+            )
+            promptTest.lastOutputText = ASRService.applyGAAVFormatting(literalFormattedResult)
+        } catch {
+            DebugLogger.shared.error("Prompt test AI call failed: \(error.localizedDescription)", source: "ContentView")
+            promptTest.lastError = error.localizedDescription
+        }
+    }
+
+    private func handleRewriteSuccessfulStop(transcribedText: String) async {
+        if NotchOverlayManager.shared.isBottomOverlayVisible {
+            BottomOverlayWindowController.shared.beginReleaseTransition()
+        }
+        DebugLogger.shared.info("Processing rewrite with instruction: \(transcribedText)", source: "ContentView")
+        AnalyticsService.shared.recordModelUsage(
+            role: .transcription,
+            mode: .edit,
+            descriptor: self.settings.selectedSpeechModel.analyticsDescriptor
+        )
+        let appInfo = self.recordingAppInfo ?? self.getCurrentAppInfo()
+        await self.processRewriteWithVoiceInstruction(transcribedText, appInfo: appInfo)
+    }
+
+    private func handleCommandSuccessfulStop(transcribedText: String) async {
+        if NotchOverlayManager.shared.isBottomOverlayVisible {
+            BottomOverlayWindowController.shared.beginReleaseTransition()
+        }
+        DebugLogger.shared.info("Processing command: \(transcribedText)", source: "ContentView")
+        AnalyticsService.shared.recordModelUsage(
+            role: .transcription,
+            mode: .command,
+            descriptor: self.settings.selectedSpeechModel.analyticsDescriptor
+        )
+        await self.processCommandWithVoice(transcribedText)
+    }
+
+    private func handleDictationSuccessfulStop(_ dispatch: DictationSuccessfulStopDispatch) async {
+        let transcribedText = dispatch.transcribedText
+        let audioSnapshot = dispatch.audioSnapshot
+        let context = dispatch.context
+        let didRequestOverlayHideOnStop = dispatch.didRequestOverlayHideOnStop
 
         if NotchOverlayManager.shared.isBottomOverlayVisible {
             BottomOverlayWindowController.shared.beginReleaseTransition()
@@ -3092,7 +3107,7 @@ struct ContentView: View {
             self.pendingSTTRetryContext = nil
             await self.dispatchSuccessfulTranscription(
                 transcribedText: trimmed,
-                audioSnapshot: nil,
+                audioSnapshot: self.asr.consumeLastCompletedAudioSnapshot(),
                 context: context,
                 didRequestOverlayHideOnStop: false
             )
@@ -5178,5 +5193,59 @@ enum DictationStopRoutingPolicy {
     ) -> Bool {
         isCloudSessionActive
             && !partialTranscription.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+struct DictationSuccessfulStopDispatch {
+    let transcribedText: String
+    let audioSnapshot: DictationAudioSnapshot?
+    let context: DictationStopRoutingContext
+    let didRequestOverlayHideOnStop: Bool
+
+    var intent: DictationSuccessfulStopIntent {
+        DictationStopRoutingPolicy.intent(for: self.context)
+    }
+
+    var usesAIEnhancement: Bool {
+        self.intent == .dictation && self.context.shouldUseAIOnStop
+    }
+
+    var usesSpokenSend: Bool {
+        self.intent == .dictation && self.context.spokenSendEnabled
+    }
+}
+
+enum DictationSuccessfulStopDispatcher {
+    static func make(
+        transcribedText: String,
+        audioSnapshot: DictationAudioSnapshot?,
+        context: DictationStopRoutingContext,
+        didRequestOverlayHideOnStop: Bool = false
+    ) -> DictationSuccessfulStopDispatch {
+        DictationSuccessfulStopDispatch(
+            transcribedText: transcribedText,
+            audioSnapshot: audioSnapshot,
+            context: context,
+            didRequestOverlayHideOnStop: didRequestOverlayHideOnStop
+        )
+    }
+
+    static func invoke(
+        _ dispatch: DictationSuccessfulStopDispatch,
+        promptTest: (String) async -> Void,
+        rewrite: (String) async -> Void,
+        command: (String) async -> Void,
+        dictation: (DictationSuccessfulStopDispatch) async -> Void
+    ) async {
+        switch dispatch.intent {
+        case .promptTest:
+            await promptTest(dispatch.transcribedText)
+        case .rewrite:
+            await rewrite(dispatch.transcribedText)
+        case .command:
+            await command(dispatch.transcribedText)
+        case .dictation:
+            await dictation(dispatch)
+        }
     }
 }

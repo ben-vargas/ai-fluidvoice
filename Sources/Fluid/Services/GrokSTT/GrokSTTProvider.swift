@@ -13,7 +13,7 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
 
     #if DEBUG
     private var sessionFactory: ((StreamingSTTSessionConfiguration) throws -> StreamingTranscriptionSession)?
-    private var restFinalHandler: (@Sendable ([Float]) async throws -> ASRTranscriptionResult)?
+    private var restFinalHandler: (@Sendable ([Float], String?) async throws -> ASRTranscriptionResult)?
     private var restFileHandler: (@Sendable (URL) async throws -> ASRTranscriptionResult)?
     private var prepareHandler: (@Sendable (((ModelPreparationProgress) -> Void)?) async throws -> Void)?
     private var prepareCallCountStorage = 0
@@ -36,7 +36,7 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
         self.lock.withLock { self.sessionFactory = factory }
     }
 
-    func setRestFinalHandler(_ handler: (@Sendable ([Float]) async throws -> ASRTranscriptionResult)?) {
+    func setRestFinalHandler(_ handler: (@Sendable ([Float], String?) async throws -> ASRTranscriptionResult)?) {
         self.lock.withLock { self.restFinalHandler = handler }
     }
 
@@ -73,10 +73,14 @@ final nonisolated class GrokSTTProvider: TranscriptionProvider, StreamingTranscr
     }
 
     nonisolated func transcribeFinal(_ samples: [Float]) async throws -> ASRTranscriptionResult {
-        try await Task.detached { [samples] in
+        try await self.transcribeFinal(samples, languageCode: nil)
+    }
+
+    nonisolated func transcribeFinal(_ samples: [Float], languageCode: String?) async throws -> ASRTranscriptionResult {
+        try await Task.detached { [samples, languageCode] in
             #if DEBUG
             if let restFinalHandler = self.lock.withLock({ self.restFinalHandler }) {
-                return try await restFinalHandler(samples)
+                return try await restFinalHandler(samples, languageCode)
             }
             #endif
             throw GrokSTTError.server(status: 501, message: "Grok REST speech-to-text is not available yet.")

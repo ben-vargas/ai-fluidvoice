@@ -45,10 +45,11 @@ nonisolated protocol StreamingTranscriptionSession: AnyObject {
     /// Must not be awaited on MainActor. No-op (debug assert) if called in `waitCreated`.
     func append(pcm16: Data)
 
-    /// WaitCreated only. Store unsent Float32 (the **entire** utterance). Replaces any
-    /// previous handoff. `finish()` will convert and send from sample 0 after `created`.
-    /// Illegal in `streaming` (pump already sent `0..<sentCursor`). Does not read
-    /// `ASRService.audioBuffer`.
+    /// Store unsent Float32 (the **entire** utterance). Replaces any previous handoff.
+    /// `finish()` will convert and send from sample 0 after `created`. Legal in
+    /// `waitCreated`, and in `streaming` only when zero frames have been appended
+    /// (created raced stop; pump sent nothing). Illegal once the pump has appended.
+    /// Does not read `ASRService.audioBuffer`.
     func handoffUnsentPCM(_ samples: [Float])
 
     /// Send `{"type":"audio.done"}`, wait for `transcript.done` (or timeout with non-empty

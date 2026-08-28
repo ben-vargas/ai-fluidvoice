@@ -279,6 +279,11 @@ final class ASRService: ObservableObject {
     private let grokRetryStore = GrokSTTRetryStore()
     private var isSessionDictation = false
     private var lastGrokLanguageCode: String?
+    /// Originating Grok recording is still being finalized. Reset must not steal this owner.
+    private var sessionOwnerLive = false
+    private var deferredSessionReset = false
+    /// Snapshot of the session-path decision at `isRunning = false`, used after stop awaits.
+    private var stopUsesSessionPath = false
 
     #if DEBUG
     var testBypassHardwareCapture = false
@@ -364,6 +369,7 @@ final class ASRService: ObservableObject {
         await self.providerResetDrain?.task.value
         await self.transcriptionExecutor.cancelAndAwaitPending()
         await self.cancelStreamingSession(clearRetry: true)
+        self.endSessionOwner()
 
         self.fluidAudioProvider = nil
         self.parakeetRealtimeProvider = nil
@@ -687,28 +693,36 @@ final class ASRService: ObservableObject {
         self.parakeetRealtimeProvider = nil
         self.externalCoreMLProvider = nil
         self.whisperProvider = nil
-        let retiringPump = self.sessionPumpTask
-        let retiringStart = self.sessionStartTask
-        self.sessionGeneration &+= 1
-        self.sessionPumpGate.requestStop()
-        self.sessionPumpTask?.cancel()
-        self.sessionPumpTask = nil
-        self.sessionStartTask?.cancel()
-        self.sessionStartTask = nil
-        self.activeStreamingSession?.cancel()
-        self.activeStreamingSession = nil
-        self.sessionTransportError = nil
-        self.createdReceived = false
-        self.isSessionDictation = false
-        self.sessionGrokProvider = nil
-        self.grokRetryStore.clear()
-        self.grokSTTProvider = nil
         self.appleSpeechProvider = nil
         self._appleSpeechAnalyzerProvider = nil
-        if retiringPump != nil || retiringStart != nil {
-            Task {
-                _ = await retiringPump?.value
-                _ = await retiringStart?.value
+        if self.sessionOwnerLive {
+            // Keep the originating session, provider, and retry store until that
+            // recording's stop finalization finishes. A live Grok capture must
+            // not fall through to the newly selected local engine.
+            self.deferredSessionReset = true
+            self.grokSTTProvider = nil
+        } else {
+            let retiringPump = self.sessionPumpTask
+            let retiringStart = self.sessionStartTask
+            self.sessionGeneration &+= 1
+            self.sessionPumpGate.requestStop()
+            self.sessionPumpTask?.cancel()
+            self.sessionPumpTask = nil
+            self.sessionStartTask?.cancel()
+            self.sessionStartTask = nil
+            self.activeStreamingSession?.cancel()
+            self.activeStreamingSession = nil
+            self.sessionTransportError = nil
+            self.createdReceived = false
+            self.isSessionDictation = false
+            self.sessionGrokProvider = nil
+            self.grokRetryStore.clear()
+            self.grokSTTProvider = nil
+            if retiringPump != nil || retiringStart != nil {
+                Task {
+                    _ = await retiringPump?.value
+                    _ = await retiringStart?.value
+                }
             }
         }
 
@@ -2437,6 +2451,8 @@ final class ASRService: ObservableObject {
         DebugLogger.shared.debug("🚫 Setting isRunning = false...", source: "ASRService")
         self.isRunning = false
         self.sessionPumpGate.requestStop()
+        self.stopUsesSessionPath = self.isSessionDictation
+            || self.transcriptionProvider is StreamingTranscriptionProviding
         DebugLogger.shared.debug("✅ isRunning disabled", source: "ASRService")
 
         // Stop monitoring device to prevent callbacks after stop
@@ -2495,7 +2511,7 @@ final class ASRService: ObservableObject {
         let capturedPCM = pcm
         self.benchmarkLog("stop_audio_drained samples=\(pcm.count) audioMs=\(Int((Double(pcm.count) / 16_000.0 * 1000).rounded()))")
 
-        if self.isSessionDictation || self.transcriptionProvider is StreamingTranscriptionProviding {
+        if self.stopUsesSessionPath {
             return await self.finishSessionTranscription(
                 capturedPCM: capturedPCM,
                 shouldResumeMedia: shouldResumeMedia,
@@ -2888,6 +2904,7 @@ final class ASRService: ObservableObject {
         // This prevents use-after-free crashes (EXC_BAD_ACCESS) when clearing buffer
         await self.stopStreamingTimerAndAwait()
         await self.cancelStreamingSession(clearRetry: true)
+        self.endSessionOwner()
 
         // NOW it's safe to clear the buffer
         self.audioBuffer.clear()
@@ -4766,6 +4783,8 @@ final class ASRService: ObservableObject {
         self.sessionTransportError = nil
         self.createdReceived = false
         self.isSessionDictation = true
+        self.sessionOwnerLive = true
+        self.deferredSessionReset = false
         self.lastGrokLanguageCode = SettingsStore.shared.selectedGrokSTTLanguageCode
         self.sessionGrokProvider = self.transcriptionProvider as? GrokSTTProvider
         self.sessionGeneration &+= 1
@@ -4825,10 +4844,10 @@ final class ASRService: ObservableObject {
             do {
                 try await session.start()
                 try Task.checkCancellation()
+                gate.markCreated()
                 await MainActor.run {
                     guard let self else { return }
                     guard self.sessionGeneration == generation, self.activeStreamingSession === session else { return }
-                    gate.markCreated()
                     self.createdReceived = true
                 }
             } catch is CancellationError {
@@ -4873,6 +4892,7 @@ final class ASRService: ObservableObject {
         if shouldResumeMedia {
             await MediaPlaybackService.shared.resumeIfWePaused(true)
         }
+        self.endSessionOwner()
         return result
     }
 
@@ -4884,7 +4904,6 @@ final class ASRService: ObservableObject {
         let session = self.activeStreamingSession
         let sticky = self.sessionTransportError ?? session?.transportError
         let gateSnapshot = self.sessionPumpGate.snapshot
-        let created = self.createdReceived || gateSnapshot.createdReceived
         let sentCursor = gateSnapshot.sentCursor
 
         if capturedPCM.isEmpty && (session?.transcript ?? "").isEmpty && sticky == nil {
@@ -4910,7 +4929,10 @@ final class ASRService: ObservableObject {
             )
         }
 
-        if !created {
+        // Catch-up ownership is sentCursor, not the created flag. After the pump
+        // is dead, sentCursor == 0 means nothing was appended — hand the entire
+        // captured PCM even if start() already entered streaming off-main.
+        if sentCursor == 0 {
             session.handoffUnsentPCM(capturedPCM)
         } else if sentCursor < capturedPCM.count {
             await self.appendStopTimePCMFrames(
@@ -4970,8 +4992,9 @@ final class ASRService: ObservableObject {
             return ""
         }
         do {
+            let languageCode = self.lastGrokLanguageCode
             let result = try await self.transcriptionExecutor.run { [provider] in
-                try await provider.transcribeFinal(capturedPCM)
+                try await provider.transcribeFinal(capturedPCM, languageCode: languageCode)
             }
             let outputText = ASRService.applySpokenPunctuationFormatting(
                 ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
@@ -5016,16 +5039,7 @@ final class ASRService: ObservableObject {
             self.modelPreparationPhase = nil
         }
         self.recordWordBoostHitIfAny(transcribedText: outputText)
-        if SettingsStore.shared.saveTranscriptionHistory,
-           SettingsStore.shared.saveAudioWithTranscriptionHistory,
-           !capturedPCM.isEmpty
-        {
-            self.lastCompletedAudioSnapshot = DictationAudioSnapshot(
-                samples: capturedPCM,
-                sampleRate: 16_000,
-                channels: 1
-            )
-        }
+        self.publishDictationAudioSnapshotIfConfigured(from: capturedPCM)
         self.lastStopOutcome = outputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? .empty
             : .success
@@ -5060,18 +5074,43 @@ final class ASRService: ObservableObject {
         self.sessionPumpGate.requestStop()
         self.sessionPumpTask?.cancel()
         self.sessionStartTask?.cancel()
+        // Close the socket before awaiting start(). A real URLSession-backed
+        // `start()` waiting for `transcript.created` does not finish merely
+        // because its parent Task was cancelled.
+        self.activeStreamingSession?.cancel()
         await self.sessionPumpTask?.value
         await self.sessionStartTask?.value
         self.sessionPumpTask = nil
         self.sessionStartTask = nil
-        self.activeStreamingSession?.cancel()
         self.activeStreamingSession = nil
         self.sessionGrokProvider = nil
         self.sessionTransportError = nil
         self.createdReceived = false
         self.isSessionDictation = false
+        self.stopUsesSessionPath = false
         if clearRetry {
             self.grokRetryStore.clear()
+        }
+    }
+
+    private func endSessionOwner() {
+        self.sessionOwnerLive = false
+        guard self.deferredSessionReset else { return }
+        self.deferredSessionReset = false
+        // Retry retained by the just-finished stop must survive this deferred
+        // cleanup. Cache/provider reset already ran when the user switched.
+    }
+
+    private func publishDictationAudioSnapshotIfConfigured(from capturedPCM: [Float]) {
+        if SettingsStore.shared.saveTranscriptionHistory,
+           SettingsStore.shared.saveAudioWithTranscriptionHistory,
+           !capturedPCM.isEmpty
+        {
+            self.lastCompletedAudioSnapshot = DictationAudioSnapshot(
+                samples: capturedPCM,
+                sampleRate: 16_000,
+                channels: 1
+            )
         }
     }
 
@@ -5086,8 +5125,9 @@ final class ASRService: ObservableObject {
             return ""
         }
         do {
+            let languageCode = pending.languageCode
             let result = try await self.transcriptionExecutor.run { [provider] in
-                try await provider.transcribeFinal(pending.samples)
+                try await provider.transcribeFinal(pending.samples, languageCode: languageCode)
             }
             let outputText = ASRService.applySpokenPunctuationFormatting(
                 ASRService.applyCustomDictionary(ASRService.removeFillerWords(result.text))
@@ -5102,6 +5142,7 @@ final class ASRService: ObservableObject {
                 self.lastStopOutcome = .failed
                 return ""
             }
+            self.publishDictationAudioSnapshotIfConfigured(from: pending.samples)
             self.lastStopOutcome = .success
             return outputText
         } catch {
@@ -5139,6 +5180,12 @@ final class ASRService: ObservableObject {
     var debugActiveStreamingSession: StreamingTranscriptionSession? { self.activeStreamingSession }
 
     var debugGrokRetryStore: GrokSTTRetryStore { self.grokRetryStore }
+
+    var debugIsSessionDictation: Bool { self.isSessionDictation }
+
+    var debugSessionOwnerLive: Bool { self.sessionOwnerLive }
+
+    var debugSessionGrokProvider: GrokSTTProvider? { self.sessionGrokProvider }
 
     private func startBypassingHardwareCapture(
         forDictionaryTraining: Bool,

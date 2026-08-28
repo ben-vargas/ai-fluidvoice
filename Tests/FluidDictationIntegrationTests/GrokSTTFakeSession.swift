@@ -17,13 +17,15 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
         var createdDelay: TimeInterval = 0
         var finishDelay: TimeInterval = 0
         var startError: GrokSTTError?
-        var finishError: GrokSTTError?
         var failBeforeAudioDone: GrokSTTError?
         var neverCreated: Bool = false
         var createdTimeout: TimeInterval = 20
-        var emitPartialsFromHandoff: Bool = false
         var transcriptOnFinish: String?
         var blockAppend: Bool = false
+        /// `start()` stays in `waitCreated` until `cancel()`; Task cancellation is ignored.
+        var startUntilCancelled: Bool = false
+        /// Enter `streaming` before `createdDelay` elapses so stop can race the created gate.
+        var enterStreamingBeforeReturn: Bool = false
     }
 
     private let lock = NSLock()
@@ -37,7 +39,6 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
 
     private(set) var appendedFrames: [Data] = []
     private(set) var audioDoneSent = false
-    private(set) var startCallCount = 0
     private(set) var appendCallCount = 0
     private(set) var finishCallCount = 0
     private(set) var cancelCallCount = 0
@@ -85,15 +86,27 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
 
     func start() async throws {
         self.lock.withLock {
-            self.startCallCount += 1
             if self.state == .idle {
                 self.state = .waitCreated
             }
         }
 
+        if self.configuration.startUntilCancelled {
+            try await self.waitUntilCreated()
+            throw GrokSTTError.cancelled
+        }
+
         if self.configuration.neverCreated {
             try await Task.sleep(nanoseconds: UInt64(max(self.configuration.createdTimeout, 0.05) * 1_000_000_000))
             throw GrokSTTError.timeout
+        }
+
+        if self.configuration.enterStreamingBeforeReturn {
+            self.lock.withLock {
+                if self.state == .waitCreated || self.state == .idle {
+                    self.state = .streaming
+                }
+            }
         }
 
         if self.configuration.createdDelay > 0 {
@@ -149,7 +162,13 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
     func handoffUnsentPCM(_ samples: [Float]) {
         self.lock.withLock {
             self.handoffCallCount += 1
-            if self.state == .streaming {
+            if self.state == .streaming, !self.appendedFrames.isEmpty {
+                return
+            }
+            guard self.state == .waitCreated
+                || self.state == .idle
+                || self.state == .streaming
+            else {
                 return
             }
             self.handoffSamples = samples
@@ -164,6 +183,10 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
         }
 
         try await self.waitUntilCreated()
+
+        if self.configuration.finishDelay > 0 {
+            try await Task.sleep(nanoseconds: UInt64(self.configuration.finishDelay * 1_000_000_000))
+        }
 
         if let preDone = self.configuration.failBeforeAudioDone {
             self.fail(preDone)
@@ -189,30 +212,12 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
                 }
                 offset = end
             }
-            if self.configuration.emitPartialsFromHandoff {
-                self.recordPartial(start: 0, text: "handoff")
-            }
         }
 
         self.lock.withLock { self.audioDoneSent = true }
 
-        if self.configuration.finishDelay > 0 {
-            try await Task.sleep(nanoseconds: UInt64(self.configuration.finishDelay * 1_000_000_000))
-        }
-
-        if let finishError = self.configuration.finishError {
-            let assembled = self.transcript
-            // Post-`audio.done` transport error with text is success (Quill).
-            if !assembled.isEmpty {
-                self.lock.withLock { self.state = .complete }
-                return assembled
-            }
-            self.fail(finishError)
-            throw finishError
-        }
-
         if let forced = self.configuration.transcriptOnFinish {
-            self.replaceAssembler(forced)
+            self.lock.withLock { self.assembler.replaceWithServerText(forced) }
         }
 
         let assembled = self.transcript
@@ -245,10 +250,6 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
         Task { @MainActor in
             handler(snapshot)
         }
-    }
-
-    func replaceAssembler(_ text: String) {
-        self.lock.withLock { self.assembler.replaceWithServerText(text) }
     }
 
     func fail(_ error: GrokSTTError) {
@@ -291,4 +292,5 @@ final nonisolated class GrokSTTFakeSession: StreamingTranscriptionSession, @unch
             }
         }
     }
+
 }

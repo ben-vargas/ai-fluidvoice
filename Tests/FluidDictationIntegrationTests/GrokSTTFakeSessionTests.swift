@@ -31,4 +31,44 @@ final class GrokSTTFakeSessionTests: XCTestCase {
         XCTAssertEqual(session.handoffCallCount, 1)
         XCTAssertEqual(session.appendedSampleCount, 3_200)
     }
+
+    func testHandoffIsLegalInStreamingWhenNoFramesWereAppended() async throws {
+        let session = GrokSTTFakeSession(configuration: .init(transcriptOnFinish: "handoff"))
+        try await session.start()
+        XCTAssertEqual(session.currentState, .streaming)
+        let pcm = [Float](repeating: 0.3, count: 1_600)
+        session.handoffUnsentPCM(pcm)
+        XCTAssertEqual(session.handoffCallCount, 1)
+        XCTAssertEqual(session.handoffPCM, pcm)
+
+        let text = try await session.finish()
+        XCTAssertEqual(text, "handoff")
+        XCTAssertEqual(session.appendedSampleCount, pcm.count)
+        XCTAssertTrue(session.audioDoneSent)
+    }
+
+    func testStartExitsOnlyWhenCancelIsInvoked() async {
+        let finished = TestCounter()
+        let session = GrokSTTFakeSession(configuration: .init(startUntilCancelled: true))
+        let start = Task {
+            defer { finished.increment() }
+            do {
+                try await session.start()
+                return "returned"
+            } catch {
+                return "threw"
+            }
+        }
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        XCTAssertEqual(session.cancelCallCount, 0)
+        start.cancel()
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        XCTAssertEqual(finished.count, 0, "start() must ignore Task cancellation and wait for cancel()")
+        session.cancel()
+        let outcome = await start.value
+        XCTAssertEqual(outcome, "threw")
+        XCTAssertEqual(session.cancelCallCount, 1)
+        XCTAssertEqual(finished.count, 1)
+        XCTAssertFalse(session.audioDoneSent)
+    }
 }
