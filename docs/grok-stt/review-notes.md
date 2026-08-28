@@ -405,3 +405,17 @@ Approved. No leftover minors.
 - **Cookie headers are masked with a Bearer-shaped placeholder** (`Sources/Fluid/Services/GrokSTT/GrokSTTLog.swift`). `maskedHeaderValue` returns the literal `"Bearer [REDACTED]"` for any header whose name contains `auth` or `cookie`. A `Cookie:` header therefore renders as `Cookie: Bearer [REDACTED]`. Redaction itself is correct — `testDescribeRequestMasksCookieHeaders` confirms the secret never reaches the log. Suggested: return a scheme-neutral `"[REDACTED]"` for the cookie branch, keeping `"Bearer [REDACTED]"` only for names containing `auth`.
 
 - **Missing-clock sentinel prints as a negative latency** (`Sources/Fluid/Services/GrokSTT/GrokSTTLog.swift`). `milliseconds(since:)` returns -1 when the reference date is nil. Because `audioDoneAt` is stamped only when the `audio.done` text frame is actually transmitted, a `transcript.done` that arrives without a preceding send logs `ms=-1`. Same for `transcript.created waitMs=-1` if `connectStartedAt` is nil. Suggested: return `Int?` and format the nil case as `ms=n/a`.
+
+## PR5 round 3
+
+```json
+[
+  {
+    "severity": "minor",
+    "title": "Live-probe WAV reader assumes a 44-byte header; this fixture's data chunk starts at 4096",
+    "detail": "GrokSTTLiveProbeTests.float32FromWAV hand-rolls WAV parsing with `data.dropFirst(44)`, but dictation_fixture.wav has a 4044-byte FLLR filler chunk between `fmt ` and `data` (verified with xxd: `FLLR` size 0x0fcc at offset 36, `data` id at 4088, PCM starts at 4096). So L1/L3/L12 POST 4052 bytes of filler-plus-chunk-header reinterpreted as ~2026 leading PCM samples (~0.127 s of silence plus a 4-sample click from the `data`+size bytes) ahead of the real audio. It survives today only because the filler length is even, keeping the real samples 16-bit aligned. The same test target already has AudioFixtureLoader.load16kMonoFloatSamples(named:ext:) (Tests/FluidDictationIntegrationTests/Helpers/AudioFixtureLoader.swift:20), which decodes via AVAudioFile and resamples to 16 kHz mono Float32; DictationE2ETests.swift:1232 uses it on this same fixture.",
+    "file": "Tests/FluidDictationIntegrationTests/GrokSTTLiveProbeTests.swift",
+    "suggestedFix": "Delete float32FromWAV and make fixtureSamples() return `try AudioFixtureLoader.load16kMonoFloatSamples(named: \"dictation_fixture\", ext: \"wav\")`, keeping the XCTSkip for a missing fixture. That removes the header-offset assumption and makes the probes robust if the fixture is ever regenerated with a different chunk layout or sample format."
+  }
+]
+```
