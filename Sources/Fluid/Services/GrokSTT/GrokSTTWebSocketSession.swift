@@ -40,7 +40,6 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
     private var connection: (any GrokSTTWebSocketConnection)?
     private var receiveTask: Task<Void, Never>?
     private var connectStartedAt: Date?
-    private var createdAt: Date?
     private var firstPartialAt: Date?
     private var audioDoneAt: Date?
     private var partialEventCount = 0
@@ -475,9 +474,6 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
         if self.state == .waitCreated || self.state == .connecting || self.state == .idle {
             self.state = .streaming
         }
-        if self.createdAt == nil {
-            self.createdAt = Date()
-        }
         waitMs = GrokSTTLog.milliseconds(since: self.connectStartedAt)
         waiters = self.createdWaiters
         self.createdWaiters = []
@@ -488,11 +484,9 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
 
     private func recordPartial(start: Double, text: String) {
         let snapshot: String
-        let count: Int
         let firstByteMs: Int?
         self.lock.lock()
         self.partialEventCount += 1
-        count = self.partialEventCount
         var firstByte: Int?
         if self.firstPartialAt == nil {
             self.firstPartialAt = Date()
@@ -505,7 +499,6 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
         if let firstByteMs {
             GrokSTTLog.info("first-byte ms=\(firstByteMs)")
         }
-        GrokSTTLog.info("partial count=\(count)")
         if !text.isEmpty {
             GrokSTTLog.debug("partial text=\(GrokSTTLog.truncatedTranscript(text))")
         }
@@ -719,7 +712,6 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
             if self.state == .streaming || self.state == .waitCreated {
                 self.state = .finishing
             }
-            self.audioDoneAt = Date()
             self.outbound.append(.text(#"{"type":"audio.done"}"#, continuation))
             let shouldKick = !self.senderRunning
             if shouldKick {
@@ -894,6 +886,9 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
                 }
             case let .text(text, continuation):
                 do {
+                    // Start the audio.done → transcript.done clock at transmission,
+                    // after earlier PCM frames have drained — not at queue insertion.
+                    self.lock.withLock { self.audioDoneAt = Date() }
                     try await self.sendText(text)
                     let accepted: Result<Void, Error> = self.lock.withLock {
                         if self.state == .cancelled {
