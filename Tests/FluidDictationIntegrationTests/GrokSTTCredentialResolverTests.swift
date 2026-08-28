@@ -152,6 +152,47 @@ final class GrokSTTCredentialResolverTests: XCTestCase {
         XCTAssertFalse(neither.isSourceConfigured)
     }
 
+    func testIsSourceConfiguredIgnoresTheOtherMode() {
+        let files = MemoryGrokSTTFileSystem()
+        files.files[self.authPath] = self.sessionJSON(key: "cli-bearer", expiresFromNow: 3600)
+
+        let apiKeyModeStoreOnly = self.makeResolver(
+            mode: .apiKey,
+            apiKeys: InMemoryGrokSTTAPIKeyStore(),
+            files: files,
+            refresh: CountingGrokCLIRefresh()
+        )
+        XCTAssertFalse(apiKeyModeStoreOnly.isSourceConfigured)
+
+        let cliModeKeyOnly = self.makeResolver(
+            mode: .grokCLISession,
+            apiKeys: InMemoryGrokSTTAPIKeyStore(key: "xai-stt-test-key"),
+            files: MemoryGrokSTTFileSystem(),
+            refresh: CountingGrokCLIRefresh()
+        )
+        XCTAssertFalse(cliModeKeyOnly.isSourceConfigured)
+    }
+
+    func testExpiredSelfConsistentTriggersRefreshInsteadOfMismatchedLiveEntry() async throws {
+        let files = MemoryGrokSTTFileSystem()
+        files.files[self.authPath] = self.expiredConsistentAndLiveMismatchedJSON()
+        files.executables.insert("/Users/test/.grok/bin/grok")
+        let refresh = CountingGrokCLIRefresh()
+        refresh.onRefresh = {
+            files.files[self.authPath] = self.sessionJSON(key: "fresh-consistent", expiresFromNow: 3600)
+        }
+        let resolver = self.makeResolver(
+            mode: .grokCLISession,
+            apiKeys: InMemoryGrokSTTAPIKeyStore(),
+            files: files,
+            refresh: refresh
+        )
+        let credential = try await resolver.resolveCredential()
+        XCTAssertEqual(credential.bearer, "fresh-consistent")
+        XCTAssertEqual(credential.source, .grokCLISession)
+        XCTAssertEqual(refresh.spawnCount, 1)
+    }
+
     func testRefreshSpawnsSessionsListOnly() async throws {
         let spy = SpyGrokCLIProcessLauncher()
         let delegate = GrokCLIRefreshDelegate(launcher: spy)
@@ -194,13 +235,31 @@ final class GrokSTTCredentialResolverTests: XCTestCase {
         for error in cases {
             let nsError = error.asNSError()
             XCTAssertEqual(Array(nsError.userInfo.keys), [NSLocalizedDescriptionKey])
-            let description = nsError.localizedDescription
-            XCTAssertFalse(description.localizedCaseInsensitiveContains("Bearer"))
-            XCTAssertFalse(description.contains("supersecret-token-value"))
-            XCTAssertFalse(description.localizedCaseInsensitiveContains("refresh_token"))
+            let texts = [
+                nsError.localizedDescription,
+                String(describing: error),
+                String(reflecting: error),
+            ]
+            for text in texts {
+                XCTAssertFalse(text.localizedCaseInsensitiveContains("Bearer"), text)
+                XCTAssertFalse(text.contains("supersecret-token-value"), text)
+                XCTAssertFalse(text.localizedCaseInsensitiveContains("refresh_token"), text)
+            }
             XCTAssertEqual(nsError.domain, GrokSTTError.nsErrorDomain)
             XCTAssertEqual(nsError.code, error.numericCode)
         }
+
+        let fromHTTP = GrokSTTError.fromHTTPStatus(
+            503,
+            message: "Bearer supersecret-token-value-12345678901234567890"
+        )
+        guard case let .server(_, storedMessage) = fromHTTP else {
+            return XCTFail("503 must map to .server")
+        }
+        XCTAssertFalse(storedMessage.localizedCaseInsensitiveContains("Bearer"))
+        XCTAssertFalse(storedMessage.contains("supersecret-token-value"))
+        XCTAssertFalse(String(describing: fromHTTP).contains("supersecret-token-value"))
+        XCTAssertFalse(String(reflecting: fromHTTP).contains("supersecret-token-value"))
     }
 
     func testForbiddenHasNoRetryHelper() {
@@ -257,6 +316,28 @@ final class GrokSTTCredentialResolverTests: XCTestCase {
         return Data(json.utf8)
     }
 
+    private func expiredConsistentAndLiveMismatchedJSON() -> Data {
+        let expired = ISO8601DateFormatter().string(from: self.now.addingTimeInterval(100))
+        let live = ISO8601DateFormatter().string(from: self.now.addingTimeInterval(3600))
+        let json = """
+        {
+          "https://auth.x.ai::client-a": {
+            "key": "expired-consistent",
+            "expires_at": "\(expired)",
+            "oidc_issuer": "https://auth.x.ai",
+            "oidc_client_id": "client-a"
+          },
+          "mismatch-scope": {
+            "key": "live-mismatch",
+            "expires_at": "\(live)",
+            "oidc_issuer": "https://auth.x.ai",
+            "oidc_client_id": "client-b"
+          }
+        }
+        """
+        return Data(json.utf8)
+    }
+
     private func twoSessionJSON() -> Data {
         let expires = ISO8601DateFormatter().string(from: self.now.addingTimeInterval(3600))
         let json = """
@@ -276,6 +357,34 @@ final class GrokSTTCredentialResolverTests: XCTestCase {
         }
         """
         return Data(json.utf8)
+    }
+}
+
+final class InMemoryGrokSTTAPIKeyStore: GrokSTTAPIKeyStoring, @unchecked Sendable {
+    private let lock = NSLock()
+    private var key: String?
+
+    init(key: String? = nil) {
+        self.key = key
+    }
+
+    func loadAPIKey() throws -> String? {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.key
+    }
+
+    func storeAPIKey(_ key: String) throws {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        self.key = trimmed.isEmpty ? nil : trimmed
+    }
+
+    func deleteAPIKey() throws {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        self.key = nil
     }
 }
 

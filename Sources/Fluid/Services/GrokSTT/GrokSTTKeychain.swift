@@ -103,31 +103,3 @@ final nonisolated class GrokSTTKeychain: GrokSTTAPIKeyStoring, @unchecked Sendab
         ]
     }
 }
-
-final nonisolated class InMemoryGrokSTTAPIKeyStore: GrokSTTAPIKeyStoring, @unchecked Sendable {
-    private let lock = NSLock()
-    private var key: String?
-
-    init(key: String? = nil) {
-        self.key = key
-    }
-
-    func loadAPIKey() throws -> String? {
-        self.lock.lock()
-        defer { self.lock.unlock() }
-        return self.key
-    }
-
-    func storeAPIKey(_ key: String) throws {
-        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.lock.lock()
-        defer { self.lock.unlock() }
-        self.key = trimmed.isEmpty ? nil : trimmed
-    }
-
-    func deleteAPIKey() throws {
-        self.lock.lock()
-        defer { self.lock.unlock() }
-        self.key = nil
-    }
-}
