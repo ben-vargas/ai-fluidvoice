@@ -159,3 +159,15 @@ No leftover minors. Blocking/major items (stale stop-time sentCursor, start duri
 - **Switching engines while the Retry banner is up makes Retry a silent no-op** (`Sources/Fluid/Services/ASRService.swift`). After a failed Grok stop the overlay shows the STT failure banner (`NotchContentState.isSTTFailureVisible`). If the user then switches voice engines, `resetTranscriptionProvider()` takes the non-deferred branch (`sessionOwnerLive` is already false). If a later change discards Retry without clearing `isSTTFailureVisible`, the Retry button stays on screen; pressing it calls `retryPendingGrokTranscription()`, `consume()` returns nil, and the same error banner is re-shown with no explanation. Suggested: when a path clears the retry store, also clear the overlay failure state (e.g. an ASRService-published signal ContentView observes, or have ContentView call `NotchContentState.shared.clearSTTFailure()` on speech-model change).
 
 - **Redundant !context.isNormalRoute conjunct in the onboarding-tryout branch** (`Sources/Fluid/ContentView.swift`). `isOnboardingTryout` is built as `route == .onboardingSandbox && self.isOnboardingVoicePlaygroundStepActive` (`ContentView.swift:2097`), so it already implies `!isNormalRoute`. The extra conjunct at `:2434` never changes the outcome and reads as if two independent conditions matter. Suggested: drop `!context.isNormalRoute,` and keep `context.isOnboardingTryout`.
+
+## PR3a review round 5
+
+### Codex
+
+No leftover minors. Blocking/major items (cancel teardown clearing a replacement local buffer, engine-switch overlay hide-before-stop, overlapping stop/start routing) were filed as blocking/major and fixed in this round.
+
+### Claude
+
+- **Stale STT failure banner survives into a command or rewrite recording** (`Sources/Fluid/ContentView.swift`). `NotchContentState.clearSTTFailure()` is called on the two dictation start paths (`ContentView.swift:3328` and `:4016`) but not on command (`:3616`) or rewrite (`:3636+`), which only call `advanceOverlayLifecycle()`. That helper clears `isAIProcessingFailureVisible` but not `isSTTFailureVisible`. After a failed Grok stop, command/rewrite leave the STT Retry banner on the overlay; pressing Retry is a no-op because `startTranscriptionAfterCaptureBegan` already cleared the retry store. Suggested: move `clearSTTFailure()` into `advanceOverlayLifecycle()` and drop the now-redundant dictation-start call sites.
+
+- **Retry store holds up to ~38 MB of PCM past its TTL** (`Sources/Fluid/Services/GrokSTT/GrokSTTRetryStore.swift`). `hasPending` returns false after 15 minutes, but `pending` itself is never released until `clear()`/`consume()`. The next recording clears it in practice; an idle app after a failed Grok stop retains the buffer indefinitely rather than at the contracted 15-minute boundary. Suggested: have `hasPending` (or a small sweep) null out `pending` when the TTL elapses.
