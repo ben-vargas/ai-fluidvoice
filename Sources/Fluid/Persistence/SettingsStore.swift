@@ -15,6 +15,7 @@ final class SettingsStore: ObservableObject {
 
     static let shared = SettingsStore()
     private static let automaticWhisperLanguageCode = "auto"
+    private static let automaticGrokSTTLanguageCode = "auto"
     static let transcriptionPreviewCharLimitRange: ClosedRange<Int> = 50...800
     static let transcriptionPreviewCharLimitStep = 50
     static let defaultTranscriptionPreviewCharLimit = 150
@@ -3236,6 +3237,8 @@ final class SettingsStore: ObservableObject {
             privateAIContextTokenLimit: self.privateAIContextTokenLimit,
             selectedSpeechModel: self.selectedSpeechModel,
             selectedWhisperLanguageCode: Self.whisperLanguageBackupValue(for: self.selectedWhisperLanguageCode),
+            selectedGrokSTTLanguageCode: Self.grokSTTLanguageBackupValue(for: self.selectedGrokSTTLanguageCode),
+            grokCLIBinaryPath: self.grokCLIBinaryPath,
             selectedCohereLanguage: self.selectedCohereLanguage,
             selectedNemotronLanguage: self.selectedNemotronLanguage,
             selectedAppleSpeechLocaleIdentifier: self.selectedAppleSpeechLocaleIdentifier,
@@ -3360,6 +3363,12 @@ final class SettingsStore: ObservableObject {
         self.selectedSpeechModel = payload.selectedSpeechModel
         if let selectedWhisperLanguageCode = payload.selectedWhisperLanguageCode {
             self.selectedWhisperLanguageCode = Self.whisperLanguageCode(fromBackupValue: selectedWhisperLanguageCode)
+        }
+        if let selectedGrokSTTLanguageCode = payload.selectedGrokSTTLanguageCode {
+            self.selectedGrokSTTLanguageCode = Self.grokSTTLanguageCode(fromBackupValue: selectedGrokSTTLanguageCode)
+        }
+        if let grokCLIBinaryPath = payload.grokCLIBinaryPath {
+            self.grokCLIBinaryPath = grokCLIBinaryPath
         }
         self.selectedCohereLanguage = payload.selectedCohereLanguage
         if let selectedNemotronLanguage = payload.selectedNemotronLanguage {
@@ -4559,6 +4568,21 @@ final class SettingsStore: ObservableObject {
         /// Flip to `true` in a future round to re-enable Qwen without deleting implementation.
         static let qwenPreviewEnabled = false
 
+        /// PR1 hides the Grok Speech card. PR2 shows it; Activate stays off until PR3b.
+        static let grokSTTCatalogVisible = false
+        /// Flip to `true` in PR3b once the real WebSocket session is wired.
+        static let grokSTTActivateEnabled = false
+
+        /// PR1 has no credential plumbing. PR2 wires Keychain + the read-only CLI store.
+        static var grokSTTCredentialSourceConfigured: Bool { false }
+
+        static func isGrokSTTSelectable(
+            catalogVisible: Bool = grokSTTCatalogVisible,
+            credentialSourceConfigured: Bool = grokSTTCredentialSourceConfigured
+        ) -> Bool {
+            catalogVisible && credentialSourceConfigured
+        }
+
         // MARK: - FluidAudio Models (Apple Silicon Only)
 
         case parakeetTDT = "parakeet-tdt"
@@ -4584,6 +4608,10 @@ final class SettingsStore: ObservableObject {
         case whisperLargeTurbo = "whisper-large-turbo"
         case whisperLarge = "whisper-large"
 
+        // MARK: - Cloud (opt-in; never default)
+
+        case grokSTT = "grok-stt"
+
         var id: String {
             rawValue
         }
@@ -4608,6 +4636,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return "Whisper Medium"
             case .whisperLargeTurbo: return "Whisper Large Turbo"
             case .whisperLarge: return "Whisper Large"
+            case .grokSTT: return "Grok Speech (xAI)"
             }
         }
 
@@ -4624,6 +4653,8 @@ final class SettingsStore: ObservableObject {
             case .appleSpeechAnalyzer: return "EN, ES, FR, DE, IT, JA, KO, PT, ZH"
             case .whisperTiny, .whisperBase, .whisperSmall, .whisperMedium, .whisperLargeTurbo, .whisperLarge:
                 return "99 Languages"
+            case .grokSTT:
+                return "25 languages (select or Auto)"
             }
         }
 
@@ -4645,6 +4676,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return "~793.0 MiB"
             case .whisperLargeTurbo: return "~845.3 MiB"
             case .whisperLarge: return "~1.55 GiB"
+            case .grokSTT: return "Cloud — no download"
             }
         }
 
@@ -4663,7 +4695,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return 831_538_144
             case .whisperLargeTurbo: return 886_381_760
             case .whisperLarge: return 1_668_741_440
-            case .appleSpeech, .appleSpeechAnalyzer: return 0
+            case .appleSpeech, .appleSpeechAnalyzer, .grokSTT: return 0
             }
         }
 
@@ -4676,8 +4708,10 @@ final class SettingsStore: ObservableObject {
 
         var isWhisperModel: Bool {
             switch self {
-            case .parakeetTDT, .parakeetTDTv2, .parakeetRealtime, .qwen3Asr, .cohereTranscribeSixBit, .nemotronOffline, .nemotronStreaming, .nemotronStreaming320, .appleSpeech, .appleSpeechAnalyzer: return false
-            default: return true
+            case .parakeetTDT, .parakeetTDTv2, .parakeetRealtime, .qwen3Asr, .cohereTranscribeSixBit, .nemotronOffline, .nemotronStreaming, .nemotronStreaming320, .appleSpeech, .appleSpeechAnalyzer, .grokSTT:
+                return false
+            case .whisperTiny, .whisperBase, .whisperSmall, .whisperMedium, .whisperLargeTurbo, .whisperLarge:
+                return true
             }
         }
 
@@ -4758,6 +4792,9 @@ final class SettingsStore: ObservableObject {
                 if model == .qwen3Asr, !Self.qwenPreviewEnabled {
                     return false
                 }
+                if model == .grokSTT, !Self.grokSTTCatalogVisible {
+                    return false
+                }
                 if model == .nemotronStreaming320 {
                     return false
                 }
@@ -4807,6 +4844,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return "Medium Quality"
             case .whisperLargeTurbo: return "Higher Quality but Faster"
             case .whisperLarge: return "Maximum Accuracy"
+            case .grokSTT: return "Cloud dictation"
             }
         }
 
@@ -4848,6 +4886,8 @@ final class SettingsStore: ObservableObject {
                 return "Near-maximum accuracy with optimized speed."
             case .whisperLarge:
                 return "Best possible accuracy. Large download and memory usage."
+            case .grokSTT:
+                return "Cloud. Your microphone audio is sent to xAI for transcription (wss://api.x.ai/v1/stt). This is opt-in and is not local-first."
             }
         }
 
@@ -4862,7 +4902,7 @@ final class SettingsStore: ObservableObject {
                 return 8.0
             case .nemotronOffline, .nemotronStreaming, .nemotronStreaming320:
                 return 8.0
-            case .appleSpeech, .appleSpeechAnalyzer:
+            case .appleSpeech, .appleSpeechAnalyzer, .grokSTT:
                 return 2.0 // Built-in, minimal overhead
             case .whisperTiny:
                 return 2.0
@@ -4913,6 +4953,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return 2
             case .whisperLargeTurbo: return 3
             case .whisperLarge: return 1
+            case .grokSTT: return 4
             }
         }
 
@@ -4934,6 +4975,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return 4
             case .whisperLargeTurbo: return 5
             case .whisperLarge: return 5
+            case .grokSTT: return 4
             }
         }
 
@@ -4955,6 +4997,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return 0.40
             case .whisperLargeTurbo: return 0.65
             case .whisperLarge: return 0.20
+            case .grokSTT: return 0.90
             }
         }
 
@@ -4976,6 +5019,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return 0.80
             case .whisperLargeTurbo: return 0.95
             case .whisperLarge: return 1.00
+            case .grokSTT: return 0.85
             }
         }
 
@@ -4989,6 +5033,7 @@ final class SettingsStore: ObservableObject {
             case .cohereTranscribeSixBit: return "New"
             case .nemotronOffline, .nemotronStreaming, .nemotronStreaming320: return "New + Beta"
             case .appleSpeechAnalyzer: return "New"
+            case .grokSTT: return "Cloud · Experimental"
             default: return nil
             }
         }
@@ -5009,6 +5054,8 @@ final class SettingsStore: ObservableObject {
             switch self {
             case .qwen3Asr, .whisperMedium, .whisperLargeTurbo, .whisperLarge:
                 return false // Too slow for real-time chunk processing
+            case .grokSTT:
+                return true // Socket streaming. ASRService must skip runStreamingLoop.
             default:
                 return true // All other models support streaming
             }
@@ -5064,6 +5111,7 @@ final class SettingsStore: ObservableObject {
             case openai = "OpenAI"
             case qwen = "Qwen"
             case cohere = "Cohere"
+            case xai = "xAI"
         }
 
         /// Which provider this model belongs to
@@ -5079,6 +5127,8 @@ final class SettingsStore: ObservableObject {
                 return .cohere
             case .whisperTiny, .whisperBase, .whisperSmall, .whisperMedium, .whisperLargeTurbo, .whisperLarge:
                 return .openai
+            case .grokSTT:
+                return .xai
             }
         }
 
@@ -5090,7 +5140,7 @@ final class SettingsStore: ObservableObject {
         /// Whether this model is built-in or already downloaded on disk
         var isInstalled: Bool {
             switch self {
-            case .appleSpeech, .appleSpeechAnalyzer:
+            case .appleSpeech, .appleSpeechAnalyzer, .grokSTT:
                 return true
             case .parakeetTDT:
                 #if canImport(FluidAudio)
@@ -5208,6 +5258,8 @@ final class SettingsStore: ObservableObject {
                 return "Apple"
             case .whisperTiny, .whisperBase, .whisperSmall, .whisperMedium, .whisperLargeTurbo, .whisperLarge:
                 return "OpenAI"
+            case .grokSTT:
+                return "xAI"
             }
         }
 
@@ -5232,6 +5284,43 @@ final class SettingsStore: ObservableObject {
                 return "#A2AAAD" // Apple Gray
             case .whisperTiny, .whisperBase, .whisperSmall, .whisperMedium, .whisperLargeTurbo, .whisperLarge:
                 return "#10A37F" // OpenAI Teal
+            case .grokSTT:
+                return "#000000"
+            }
+        }
+
+        var isCloudEngine: Bool {
+            switch self {
+            case .grokSTT:
+                return true
+            default:
+                return false
+            }
+        }
+
+        var hasRemovableLocalArtifacts: Bool {
+            switch self {
+            case .grokSTT, .appleSpeech, .appleSpeechAnalyzer:
+                return false
+            default:
+                return true
+            }
+        }
+
+        var showsVoiceEngineDownloadAction: Bool {
+            !self.isInstalled
+        }
+
+        var showsVoiceEngineDeleteAction: Bool {
+            self.isInstalled && !self.usesAppleLogo && self.hasRemovableLocalArtifacts
+        }
+
+        var canActivateVoiceEngine: Bool {
+            switch self {
+            case .grokSTT:
+                return Self.grokSTTActivateEnabled
+            default:
+                return true
             }
         }
     }
@@ -5443,6 +5532,8 @@ private extension SettingsStore {
         /// Unified Speech Model (replaces above two)
         static let selectedSpeechModel = "SelectedSpeechModel"
         static let selectedWhisperLanguageCode = "SelectedWhisperLanguageCode"
+        static let selectedGrokSTTLanguageCode = "SelectedGrokSTTLanguageCode"
+        static let grokCLIBinaryPath = "GrokCLIBinaryPath"
         static let selectedCohereLanguage = "SelectedCohereLanguage"
         static let selectedNemotronLanguage = "SelectedNemotronLanguage"
         static let selectedAppleSpeechLocaleIdentifier = "SelectedAppleSpeechLocaleIdentifier"
@@ -5660,6 +5751,8 @@ extension SettingsStore.SpeechModel {
             return "40 language-locales"
         case .appleSpeechAnalyzer:
             return "EN, ES, FR, DE, IT, JA, KO, PT, ZH"
+        case .grokSTT:
+            return "AR, CS, DA, NL, EN, FIL, FR, DE, HI, ID, IT, JA, KO, MK, MS, FA, PL, PT, RO, RU, ES, SV, TH, TR, VI"
         default:
             return nil
         }
@@ -5742,6 +5835,9 @@ extension SettingsStore {
                 if model == .qwen3Asr, !SpeechModel.qwenPreviewEnabled {
                     return SpeechModel.defaultModel
                 }
+                if model == .grokSTT, !SpeechModel.isGrokSTTSelectable() {
+                    return SpeechModel.defaultModel
+                }
                 if model == .nemotronStreaming320 {
                     return .nemotronStreaming
                 }
@@ -5795,6 +5891,60 @@ extension SettingsStore {
 
     static func whisperLanguageCode(fromBackupValue value: String) -> String? {
         value == self.automaticWhisperLanguageCode ? nil : value
+    }
+
+    /// xAI STT language, or `nil` for Auto (omit the query/REST `language` param).
+    /// Catalog Tagalog `tl` is stored and sent as `fil`. Mandarin `zh` is not valid.
+    var selectedGrokSTTLanguageCode: String? {
+        get {
+            Self.grokSTTLanguageCode(fromStoredValue: self.defaults.string(forKey: Keys.selectedGrokSTTLanguageCode))
+        }
+        set {
+            objectWillChange.send()
+            self.defaults.set(newValue ?? Self.automaticGrokSTTLanguageCode, forKey: Keys.selectedGrokSTTLanguageCode)
+        }
+    }
+
+    var grokCLIBinaryPath: String? {
+        get {
+            let value = self.defaults.string(forKey: Keys.grokCLIBinaryPath)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }
+        set {
+            objectWillChange.send()
+            let trimmed = newValue?.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let trimmed, !trimmed.isEmpty {
+                self.defaults.set(trimmed, forKey: Keys.grokCLIBinaryPath)
+            } else {
+                self.defaults.removeObject(forKey: Keys.grokCLIBinaryPath)
+            }
+        }
+    }
+
+    static func grokSTTLanguageCode(fromStoredValue value: String?) -> String? {
+        guard let value, value != self.automaticGrokSTTLanguageCode else { return nil }
+        return Self.normalizedGrokSTTLanguageCode(value)
+    }
+
+    static func grokSTTLanguageBackupValue(for languageCode: String?) -> String {
+        languageCode ?? self.automaticGrokSTTLanguageCode
+    }
+
+    static func grokSTTLanguageCode(fromBackupValue value: String) -> String? {
+        value == self.automaticGrokSTTLanguageCode ? nil : Self.normalizedGrokSTTLanguageCode(value)
+    }
+
+    /// Query/REST `language` value. `nil` means omit the parameter (Auto).
+    static func grokSTTQueryLanguageParameter(fromStoredValue value: String?) -> String? {
+        Self.grokSTTLanguageCode(fromStoredValue: value)
+    }
+
+    static func normalizedGrokSTTLanguageCode(_ value: String) -> String? {
+        if value == "tl" {
+            return "fil"
+        }
+        return VoiceEngineLanguageCatalog.grokSTTLanguage(forCode: value) == nil ? nil : value
     }
 
     var selectedCohereLanguage: CohereLanguage {

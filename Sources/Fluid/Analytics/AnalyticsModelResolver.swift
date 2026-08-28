@@ -12,6 +12,8 @@ extension SettingsStore.SpeechModel {
             }
         case .qwen3Asr:
             resolvedModel = .parakeetTDT
+        case .grokSTT:
+            resolvedModel = self
         default:
             resolvedModel = self
         }
