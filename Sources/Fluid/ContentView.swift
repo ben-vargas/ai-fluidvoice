@@ -215,6 +215,9 @@ struct ContentView: View {
     @State private var activeDictationShortcutSlot: SettingsStore.DictationShortcutSlot? = nil
     @State private var activeRecordingMode: ActiveRecordingMode = .none
     @State private var pendingAIReprocessText: String? = nil
+    @State private var pendingSTTRetryWasRewrite = false
+    @State private var pendingSTTRetryWasCommand = false
+    @State private var pendingSTTRetryRoute: DictationOutputRoute = .normal
     @State private var activeShortcutRecordingTarget: ShortcutRecordingTarget? = nil
     @State private var currentRecordingModifierKeyCodes: Set<UInt16> = []
     @State private var pendingModifierKeyCodes: Set<UInt16> = []
@@ -2394,12 +2397,16 @@ struct ContentView: View {
         let shouldUseAIOnStop = activeDictationSlot.map {
             DictationAIPostProcessingGate.isConfigured(for: $0, appBundleID: self.recordingAppInfo?.bundleId)
         } ?? DictationAIPostProcessingGate.isConfigured(for: .primary, appBundleID: self.recordingAppInfo?.bundleId)
-        let shouldHideOverlayOnStop = route == .normal &&
-            !wasRewriteMode &&
-            !wasCommandMode &&
-            !promptTest.isActive &&
-            !shouldUseAIOnStop &&
-            !self.settings.spokenSendEnabled
+        let shouldHideOverlayOnStop = DictationOverlayStopPolicy.shouldHideOverlayOnStop(
+            isNormalRoute: route == .normal,
+            wasRewriteMode: wasRewriteMode,
+            wasCommandMode: wasCommandMode,
+            isPromptTestActive: promptTest.isActive,
+            shouldUseAIOnStop: shouldUseAIOnStop,
+            spokenSendEnabled: self.settings.spokenSendEnabled,
+            isCloudSessionActive: self.asr.isCloudSessionActive,
+            hasPendingSTTRetry: self.asr.hasPendingSTTRetry
+        )
         var didRequestOverlayHideOnStop = false
         DebugLogger.shared.info(
             "Routing decision snapshot | activeMode=\(modeAtStop.rawValue) | rewrite=\(wasRewriteMode) | command=\(wasCommandMode) | overlay=\(NotchContentState.shared.mode.rawValue)",
@@ -2415,10 +2422,16 @@ struct ContentView: View {
         } else {
             // Show "Transcribing" state before calling stop() when the overlay needs
             // to remain available for prompt, command, rewrite, or AI feedback.
+            // Keep live assembler text for Grok; only replace when the snapshot is empty.
+            let hasLiveTranscript = !self.asr.partialTranscription
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty
             DebugLogger.shared.debug("Showing transcription processing state", source: "ContentView")
             self.appBench("processing_ui_request status=Transcribing")
             self.menuBarManager.setProcessing(true)
-            NotchOverlayManager.shared.updateTranscriptionText("Transcribing")
+            if !hasLiveTranscript {
+                NotchOverlayManager.shared.updateTranscriptionText("Transcribing")
+            }
             self.appBench("processing_ui_requested status=Transcribing")
 
             // Give SwiftUI a chance to render the processing state before heavier work.
@@ -2456,6 +2469,18 @@ struct ContentView: View {
                 } else {
                     AnalyticsService.shared.recordOnboardingTryoutAttemptResult(outcome: .empty)
                 }
+            }
+            if self.asr.hasPendingSTTRetry {
+                self.pendingSTTRetryWasRewrite = wasRewriteMode
+                self.pendingSTTRetryWasCommand = wasCommandMode
+                self.pendingSTTRetryRoute = route
+                NotchContentState.shared.showSTTFailure(
+                    message: self.asr.errorMessage.isEmpty
+                        ? "Couldn't reach xAI. Your recording is kept — Retry sends it again."
+                        : self.asr.errorMessage
+                )
+                self.menuBarManager.finishProcessingKeepingOverlayVisible()
+                return
             }
             // Finish the same short exit transition even when no text is emitted.
             if !didRequestOverlayHideOnStop {
@@ -3018,6 +3043,42 @@ struct ContentView: View {
         return .normal
     }
 
+    private func retryLastGrokSTT() {
+        Task { @MainActor in
+            NotchContentState.shared.clearSTTFailure()
+            self.menuBarManager.setProcessing(true)
+            NotchOverlayManager.shared.updateTranscriptionText("Transcribing")
+            await Task.yield()
+            let text = await self.asr.retryPendingGrokTranscription()
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                NotchContentState.shared.showSTTFailure(
+                    message: self.asr.errorMessage.isEmpty
+                        ? "Couldn't reach xAI. Your recording is kept — Retry sends it again."
+                        : self.asr.errorMessage
+                )
+                self.menuBarManager.finishProcessingKeepingOverlayVisible()
+                return
+            }
+
+            NotchOverlayManager.shared.updateTranscriptionText("")
+            if self.pendingSTTRetryWasRewrite {
+                let appInfo = self.recordingAppInfo ?? self.getCurrentAppInfo()
+                await self.processRewriteWithVoiceInstruction(trimmed, appInfo: appInfo)
+                return
+            }
+            if self.pendingSTTRetryWasCommand {
+                await self.processCommandWithVoice(trimmed)
+                return
+            }
+            await self.applyHistoryTextOutput(trimmed, saveToHistory: true)
+            self.menuBarManager.setProcessing(false)
+            if self.pendingSTTRetryRoute == .normal {
+                await self.menuBarManager.finishProcessingAndHideOverlay()
+            }
+        }
+    }
+
     private func reprocessLastDictation() {
         if let pendingText = self.pendingAIReprocessText?.trimmingCharacters(in: .whitespacesAndNewlines),
            !pendingText.isEmpty
@@ -3518,6 +3579,7 @@ struct ContentView: View {
         }
 
         self.advanceOverlayLifecycle()
+        NotchContentState.shared.clearSTTFailure()
         self.setActiveRecordingMode(.dictate)
         let shouldShowDictationOverlay = !self.isRecordingForCommand
             && !self.isRecordingForRewrite
@@ -3719,6 +3781,9 @@ struct ContentView: View {
         }
         NotchContentState.shared.onReprocessLastRequested = {
             self.reprocessLastDictation()
+        }
+        NotchContentState.shared.onRetryLastSTTRequested = {
+            self.retryLastGrokSTT()
         }
         NotchContentState.shared.onCopyLastRequested = {
             self.copyLastDictationFromHistory()
@@ -4201,6 +4266,7 @@ extension ContentView {
             AnalyticsService.shared.recordOnboardingTryoutAttemptStarted(startMethod: startMethod)
         }
         self.advanceOverlayLifecycle()
+        NotchContentState.shared.clearSTTFailure()
         if self.asr.micStatus == .authorized {
             self.appBench("overlay_mode_request mode=Dictation")
             self.menuBarManager.setOverlayMode(.dictation)
@@ -5034,5 +5100,27 @@ struct CardAppearAnimation: ViewModifier {
             .scaleEffect(self.appear ? 1.0 : 0.96)
             .opacity(self.appear ? 1.0 : 0)
             .animation(.spring(response: 0.8, dampingFraction: 0.75, blendDuration: 0.2).delay(self.delay), value: self.appear)
+    }
+}
+
+enum DictationOverlayStopPolicy {
+    static func shouldHideOverlayOnStop(
+        isNormalRoute: Bool,
+        wasRewriteMode: Bool,
+        wasCommandMode: Bool,
+        isPromptTestActive: Bool,
+        shouldUseAIOnStop: Bool,
+        spokenSendEnabled: Bool,
+        isCloudSessionActive: Bool,
+        hasPendingSTTRetry: Bool
+    ) -> Bool {
+        isNormalRoute
+            && !wasRewriteMode
+            && !wasCommandMode
+            && !isPromptTestActive
+            && !shouldUseAIOnStop
+            && !spokenSendEnabled
+            && !isCloudSessionActive
+            && !hasPendingSTTRetry
     }
 }

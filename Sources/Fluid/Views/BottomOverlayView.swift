@@ -2287,7 +2287,9 @@ struct BottomOverlayView: View {
 
     private var shouldReservePreviewArea: Bool {
         self.layout.showsPreview &&
-            (self.settings.enableStreamingPreview || self.contentState.isAIProcessingFailureVisible)
+            (self.settings.enableStreamingPreview
+                || self.contentState.isAIProcessingFailureVisible
+                || self.contentState.isSTTFailureVisible)
     }
 
     private var overlayFrameHeight: CGFloat? {
@@ -2341,6 +2343,10 @@ struct BottomOverlayView: View {
         self.shouldReservePreviewArea && self.contentState.isAIProcessingFailureVisible && !self.contentState.isProcessing
     }
 
+    private var shouldShowSTTFailure: Bool {
+        self.shouldReservePreviewArea && self.contentState.isSTTFailureVisible && !self.contentState.isProcessing
+    }
+
     private var shouldSuppressPreviewDuringRelease: Bool {
         if self.shouldShowProcessingPreview {
             return false
@@ -2350,7 +2356,7 @@ struct BottomOverlayView: View {
 
     private func previewResizeBucket(for previewText: String) -> Int {
         guard self.shouldReservePreviewArea else { return 0 }
-        if self.shouldShowAIProcessingFailure { return 1 }
+        if self.shouldShowSTTFailure || self.shouldShowAIProcessingFailure { return 1 }
         let trimmed = previewText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return self.shouldShowProcessingStatus ? 1 : 0 }
 
@@ -2787,6 +2793,29 @@ struct BottomOverlayView: View {
         .help(help)
     }
 
+    private var sttFailureView: some View {
+        HStack(spacing: 8) {
+            Text(self.contentState.sttFailureMessage)
+                .font(.system(size: self.layout.transFontSize, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.9))
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            Spacer(minLength: 4)
+
+            self.failureIconButton(systemName: "arrow.clockwise", help: "Retry") {
+                self.contentState.clearSTTFailure()
+                self.contentState.onRetryLastSTTRequested?()
+            }
+
+            self.failureIconButton(systemName: "xmark", help: "Dismiss") {
+                self.contentState.clearSTTFailure()
+                NotchOverlayManager.shared.hide()
+            }
+        }
+        .frame(maxWidth: self.previewMaxWidth, alignment: .leading)
+    }
+
     private var aiProcessingFailureView: some View {
         HStack(spacing: 8) {
             Text(self.contentState.aiProcessingFailureMessage)
@@ -2882,6 +2911,8 @@ struct BottomOverlayView: View {
                         Group {
                             if self.shouldSuppressPreviewDuringRelease {
                                 Color.clear
+                            } else if self.shouldShowSTTFailure {
+                                self.sttFailureView
                             } else if self.shouldShowAIProcessingFailure {
                                 self.aiProcessingFailureView
                             } else if self.shouldShowProcessingPreview {
@@ -2942,6 +2973,8 @@ struct BottomOverlayView: View {
                         Group {
                             if self.shouldSuppressPreviewDuringRelease {
                                 Color.clear
+                            } else if self.shouldShowSTTFailure {
+                                self.sttFailureView
                             } else if self.shouldShowAIProcessingFailure {
                                 self.aiProcessingFailureView
                             } else if self.shouldShowProcessingPreview {
@@ -3236,6 +3269,10 @@ struct BottomOverlayView: View {
             }
         }
         .onChange(of: self.contentState.isAIProcessingFailureVisible) { _, _ in
+            guard !self.layout.usesFixedCanvas else { return }
+            self.refreshDynamicPreviewSizeIfNeeded(for: self.currentPreviewSizingText)
+        }
+        .onChange(of: self.contentState.isSTTFailureVisible) { _, _ in
             guard !self.layout.usesFixedCanvas else { return }
             self.refreshDynamicPreviewSizeIfNeeded(for: self.currentPreviewSizingText)
         }

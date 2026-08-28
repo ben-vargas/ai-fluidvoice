@@ -104,6 +104,8 @@ class NotchContentState: ObservableObject {
     @Published var isAIProcessingFailureVisible: Bool = false
     @Published private(set) var aiProcessingFailureMessage: String = "AI Enhancement failed"
     @Published private(set) var canRetryAIProcessingFailure: Bool = true
+    @Published var isSTTFailureVisible: Bool = false
+    @Published private(set) var sttFailureMessage: String = "Couldn't reach xAI. Your recording is kept — Retry sends it again."
     @Published private(set) var spokenSendIndicatorState: SpokenSendIndicatorState = .hidden
     @Published private(set) var spokenSendCountdownID: UInt64 = 0
     @Published var activeDictationShortcutSlot: SettingsStore.DictationShortcutSlot? = nil
@@ -113,6 +115,9 @@ class NotchContentState: ObservableObject {
 
     /// Called when the user picks a different dictation prompt from the overlay during recording.
     var onDictationPromptSelectionRequested: ((SettingsStore.DictationPromptSelection) -> Void)?
+
+    /// Called when the user retries a failed Grok STT capture (re-uploads PCM, not AI text).
+    var onRetryLastSTTRequested: (() -> Void)?
 
     /// Icon of the target app (where text will be typed)
     @Published var targetAppIcon: NSImage?
@@ -175,6 +180,7 @@ class NotchContentState: ObservableObject {
     func setProcessing(_ processing: Bool) {
         if processing {
             self.clearAIProcessingFailure()
+            self.clearSTTFailure()
         }
         self.isProcessing = processing
     }
@@ -190,6 +196,17 @@ class NotchContentState: ObservableObject {
 
     func clearAIProcessingFailure() {
         self.isAIProcessingFailureVisible = false
+    }
+
+    func showSTTFailure(
+        message: String = "Couldn't reach xAI. Your recording is kept — Retry sends it again."
+    ) {
+        self.sttFailureMessage = message
+        self.isSTTFailureVisible = true
+    }
+
+    func clearSTTFailure() {
+        self.isSTTFailureVisible = false
     }
 
     func setSpokenSendIndicatorState(_ state: SpokenSendIndicatorState) {
@@ -1020,7 +1037,42 @@ struct NotchExpandedView: View {
 
             self.promptHoverMenuRow
 
-            if self.contentState.isAIProcessingFailureVisible && !self.contentState.isProcessing {
+            if self.contentState.isSTTFailureVisible && !self.contentState.isProcessing {
+                HStack(spacing: 6) {
+                    Text(self.contentState.sttFailureMessage)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.white.opacity(0.82))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Spacer(minLength: 2)
+
+                    Button {
+                        self.contentState.clearSTTFailure()
+                        self.contentState.onRetryLastSTTRequested?()
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 9, weight: .bold))
+                            .frame(width: 16, height: 16)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Retry")
+
+                    Button {
+                        self.contentState.clearSTTFailure()
+                        NotchOverlayManager.shared.hide()
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 9, weight: .bold))
+                            .frame(width: 16, height: 16)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Dismiss")
+                }
+                .foregroundStyle(.white.opacity(0.9))
+                .frame(width: self.previewMaxWidth, alignment: .leading)
+                .transition(.opacity.combined(with: .scale(scale: 0.95)))
+            } else if self.contentState.isAIProcessingFailureVisible && !self.contentState.isProcessing {
                 HStack(spacing: 6) {
                     Text(self.contentState.aiProcessingFailureMessage)
                         .font(.system(size: 10, weight: .semibold))
