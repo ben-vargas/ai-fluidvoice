@@ -194,3 +194,17 @@ Blocking/major/overbuilt items applied in this round:
     "suggestedFix": "Remove the extra blank line at the end of the file."
   }
 ]
+
+## PR3b review round 1
+
+### Codex
+
+Blocking/major items (pre-`audio.done` send-state, concurrent drainers, done-timeout hang/leak, REST keyterms) were filed as blocking/major and fixed in this round.
+
+### Claude
+
+- **Reconnect-once on a post-upgrade 401 is inert** (`Sources/Fluid/Services/GrokSTT/GrokSTTWebSocketSession.swift`). `connectAndWaitCreated()` retries on 401 from `transport.connect` (covered by `testCLIUnauthorizedReconnectsOnce`). A 401 after a successful upgrade flows through the receive loop → `handleTransportFailure` → `fail()`, which sets `stickyError` and `state = .failed`. The retry reconnects but only promotes `.connecting → .waitCreated`, so the second `waitUntilCreated()` rethrows the stale 401. Latent today (xAI returns 401 at upgrade). Suggested: reset sticky error and state to `.connecting` before `continue`, or restrict the retry `catch` to connect-time errors and document post-upgrade 401s as terminal.
+
+- **`append(pcm16:)` after finish/cancel no-ops without the specified debug assert** (`Sources/Fluid/Services/GrokSTT/GrokSTTWebSocketSession.swift`). GROK-STT-DESIGN says append after finish/cancel is illegal (no-op + assert in debug). The implementation still silently returns when `state != .streaming`, including the legitimate pre-`created` no-op. Suggested: debug-only assert for `.finishing` / `.cancelled` / `.complete` while keeping `.waitCreated` quiet.
+
+- **Stale "Not activatable yet" hint copy is now unreachable and would be wrong if shown** (`Sources/Fluid/UI/AISettingsView+SpeechRecognition.swift`). `grokSTTActivateHint` still returns "Not activatable yet" when a credential source is configured. With Activate and CLI-socket enabled, `canActivateVoiceEngine` is false only when no credential source exists, so that string is only reachable via a "Needs credentials" path that already has its own copy. Suggested: delete the stale branch or replace it with Activate-available copy.
