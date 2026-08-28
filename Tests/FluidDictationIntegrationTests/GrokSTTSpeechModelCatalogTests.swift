@@ -19,7 +19,7 @@ final class GrokSTTSpeechModelCatalogTests: XCTestCase {
         XCTAssertEqual(model.badgeText, "Cloud · Experimental")
         XCTAssertEqual(model.provider, .xai)
         XCTAssertEqual(model.brandName, "xAI")
-        XCTAssertFalse(GrokSTTCatalogStubProvider().modelsExistOnDisk())
+        XCTAssertFalse(GrokSTTProvider().modelsExistOnDisk())
         XCTAssertFalse(model.canActivateVoiceEngine)
         XCTAssertTrue(SettingsStore.SpeechModel.grokSTTCatalogVisible)
         XCTAssertFalse(SettingsStore.SpeechModel.grokSTTActivateEnabled)

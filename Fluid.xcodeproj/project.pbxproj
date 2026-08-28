@@ -38,6 +38,15 @@
 		A10300000000000000000002 /* GrokSTTBackupRestoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10300000000000000000001 /* GrokSTTBackupRestoreTests.swift */; };
 		A10400000000000000000002 /* GrokSTTCLIAuthStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10400000000000000000001 /* GrokSTTCLIAuthStoreTests.swift */; };
 		A10500000000000000000002 /* GrokSTTCredentialResolverTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10500000000000000000001 /* GrokSTTCredentialResolverTests.swift */; };
+		A10600000000000000000002 /* GrokSTTTranscriptAssemblerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10600000000000000000001 /* GrokSTTTranscriptAssemblerTests.swift */; };
+		A10700000000000000000002 /* GrokSTTAudioConverterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10700000000000000000001 /* GrokSTTAudioConverterTests.swift */; };
+		A10800000000000000000002 /* GrokSTTKeytermBuilderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10800000000000000000001 /* GrokSTTKeytermBuilderTests.swift */; };
+		A10900000000000000000002 /* GrokSTTRetryStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10900000000000000000001 /* GrokSTTRetryStoreTests.swift */; };
+		A11000000000000000000002 /* GrokSTTProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11000000000000000000001 /* GrokSTTProviderTests.swift */; };
+		A11100000000000000000002 /* GrokSTTFakeSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11100000000000000000001 /* GrokSTTFakeSessionTests.swift */; };
+		A11200000000000000000002 /* GrokSTTASRServiceSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11200000000000000000001 /* GrokSTTASRServiceSessionTests.swift */; };
+		A11300000000000000000002 /* DictationOverlayStopPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11300000000000000000001 /* DictationOverlayStopPolicyTests.swift */; };
+		A11400000000000000000002 /* GrokSTTSessionHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = A11400000000000000000001 /* GrokSTTSessionHelpers.swift */; };
 		7CDB0A2F2F3C4D5600FB7CAD /* dictation_fixture.wav in Resources */ = {isa = PBXBuildFile; fileRef = 7CDB0A2B2F3C4D5600FB7CAD /* dictation_fixture.wav */; };
 		7CDB0A302F3C4D5600FB7CAD /* XCTest.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 7CDB0A2C2F3C4D5600FB7CAD /* XCTest.framework */; };
 		7CE006BD2E80EBE600DDCCD6 /* AppUpdater in Frameworks */ = {isa = PBXBuildFile; productRef = 7CE006BC2E80EBE600DDCCD6 /* AppUpdater */; };
@@ -86,6 +95,15 @@
 		A10300000000000000000001 /* GrokSTTBackupRestoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTBackupRestoreTests.swift; sourceTree = "<group>"; };
 		A10400000000000000000001 /* GrokSTTCLIAuthStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTCLIAuthStoreTests.swift; sourceTree = "<group>"; };
 		A10500000000000000000001 /* GrokSTTCredentialResolverTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTCredentialResolverTests.swift; sourceTree = "<group>"; };
+		A10600000000000000000001 /* GrokSTTTranscriptAssemblerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTTranscriptAssemblerTests.swift; sourceTree = "<group>"; };
+		A10700000000000000000001 /* GrokSTTAudioConverterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTAudioConverterTests.swift; sourceTree = "<group>"; };
+		A10800000000000000000001 /* GrokSTTKeytermBuilderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTKeytermBuilderTests.swift; sourceTree = "<group>"; };
+		A10900000000000000000001 /* GrokSTTRetryStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTRetryStoreTests.swift; sourceTree = "<group>"; };
+		A11000000000000000000001 /* GrokSTTProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTProviderTests.swift; sourceTree = "<group>"; };
+		A11100000000000000000001 /* GrokSTTFakeSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTFakeSessionTests.swift; sourceTree = "<group>"; };
+		A11200000000000000000001 /* GrokSTTASRServiceSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTASRServiceSessionTests.swift; sourceTree = "<group>"; };
+		A11300000000000000000001 /* DictationOverlayStopPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DictationOverlayStopPolicyTests.swift; sourceTree = "<group>"; };
+		A11400000000000000000001 /* GrokSTTSessionHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTSessionHelpers.swift; sourceTree = "<group>"; };
 		7C078D8F2E3B339200FB7CAC /* FluidVoice Debug.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "FluidVoice Debug.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 		7C91B0022F42AA0100C0DEF0 /* HotkeyShortcutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotkeyShortcutTests.swift; sourceTree = "<group>"; };
 		C0DE89000000000000000001 /* SettingsNavigationStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsNavigationStateTests.swift; sourceTree = "<group>"; };
@@ -187,6 +205,15 @@
 				A10300000000000000000001 /* GrokSTTBackupRestoreTests.swift */,
 				A10400000000000000000001 /* GrokSTTCLIAuthStoreTests.swift */,
 				A10500000000000000000001 /* GrokSTTCredentialResolverTests.swift */,
+				A10600000000000000000001 /* GrokSTTTranscriptAssemblerTests.swift */,
+				A10700000000000000000001 /* GrokSTTAudioConverterTests.swift */,
+				A10800000000000000000001 /* GrokSTTKeytermBuilderTests.swift */,
+				A10900000000000000000001 /* GrokSTTRetryStoreTests.swift */,
+				A11000000000000000000001 /* GrokSTTProviderTests.swift */,
+				A11100000000000000000001 /* GrokSTTFakeSessionTests.swift */,
+				A11200000000000000000001 /* GrokSTTASRServiceSessionTests.swift */,
+				A11300000000000000000001 /* DictationOverlayStopPolicyTests.swift */,
+				A11400000000000000000001 /* GrokSTTSessionHelpers.swift */,
 				0B05F11E000000000000A001 /* SupportedFileExtensionsTests.swift */,
 			);
 			path = FluidDictationIntegrationTests;
@@ -367,6 +394,15 @@
 				A10300000000000000000002 /* GrokSTTBackupRestoreTests.swift in Sources */,
 				A10400000000000000000002 /* GrokSTTCLIAuthStoreTests.swift in Sources */,
 				A10500000000000000000002 /* GrokSTTCredentialResolverTests.swift in Sources */,
+				A10600000000000000000002 /* GrokSTTTranscriptAssemblerTests.swift in Sources */,
+				A10700000000000000000002 /* GrokSTTAudioConverterTests.swift in Sources */,
+				A10800000000000000000002 /* GrokSTTKeytermBuilderTests.swift in Sources */,
+				A10900000000000000000002 /* GrokSTTRetryStoreTests.swift in Sources */,
+				A11000000000000000000002 /* GrokSTTProviderTests.swift in Sources */,
+				A11100000000000000000002 /* GrokSTTFakeSessionTests.swift in Sources */,
+				A11200000000000000000002 /* GrokSTTASRServiceSessionTests.swift in Sources */,
+				A11300000000000000000002 /* DictationOverlayStopPolicyTests.swift in Sources */,
+				A11400000000000000000002 /* GrokSTTSessionHelpers.swift in Sources */,
 				0B05F11E000000000000A002 /* SupportedFileExtensionsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
