@@ -26,6 +26,12 @@ final nonisolated class AudioCaptureReadinessGate: @unchecked Sendable {
     private var cancelledWaiterIDs = Set<UUID>()
     private var timeoutTask: Task<Void, Never>?
 
+    var hasRegisteredWaiterForTesting: Bool {
+        self.lock.lock()
+        defer { self.lock.unlock() }
+        return self.waiter != nil
+    }
+
     func arm(sessionID: Int, attemptID: UInt64) {
         self.lock.lock()
         let previousTimeoutTask = self.timeoutTask

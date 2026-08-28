@@ -61,7 +61,14 @@ final class DirectAudioReliabilityTests: XCTestCase {
                 timeoutNanoseconds: 10_000_000_000
             )
         }
-        await Task.yield()
+        let waiterDeadline = Date().addingTimeInterval(1)
+        while gate.hasRegisteredWaiterForTesting == false, Date() < waiterDeadline {
+            try? await Task.sleep(nanoseconds: 100_000)
+        }
+        XCTAssertTrue(
+            gate.hasRegisteredWaiterForTesting,
+            "Waiter must be parked before rearming; otherwise wait() returns .staleSession"
+        )
 
         gate.arm(sessionID: 41, attemptID: 2)
 
