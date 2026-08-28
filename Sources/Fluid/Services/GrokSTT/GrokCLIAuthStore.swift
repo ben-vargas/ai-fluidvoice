@@ -209,12 +209,9 @@ nonisolated struct GrokCLIAuthStore: Sendable {
         }
         guard !eligible.isEmpty else { return nil }
 
-        let unexpired = eligible.filter { !$0.isExpired }
-        let pool = unexpired.isEmpty ? eligible : unexpired
-
         var best: GrokCLIAuthLoadedEntry?
         var bestScore = Int.min
-        for entry in pool {
+        for entry in eligible {
             let rotated = Self.isRotated(entry, previousKeys: previousKeys)
             let score = (rotated ? 4 : 0) + (entry.isSelfConsistent ? 2 : 0) + (entry.isExpired ? 0 : 1)
             if score > bestScore {

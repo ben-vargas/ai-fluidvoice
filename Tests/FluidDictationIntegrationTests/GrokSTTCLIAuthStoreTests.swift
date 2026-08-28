@@ -80,7 +80,7 @@ final class GrokSTTCLIAuthStoreTests: XCTestCase {
         XCTAssertEqual(picked.entry.key, "consistent")
     }
 
-    func testExpiredNeverPreferredOverUnexpired() throws {
+    func testUnexpiredWinsWhenHigherPriorityAttributesAreEqual() throws {
         let expiredConsistent = self.loaded(
             scope: "https://auth.x.ai::client-a",
             key: "expired",
@@ -89,19 +89,47 @@ final class GrokSTTCLIAuthStoreTests: XCTestCase {
             client: "client-a"
         )
         XCTAssertTrue(expiredConsistent.isExpired)
-        let unexpiredOther = self.loaded(
-            scope: "mismatch-scope",
+        let unexpiredConsistent = self.loaded(
+            scope: "https://auth.x.ai::client-b",
             key: "live",
             expiresAt: self.now.addingTimeInterval(3600),
             issuer: "https://auth.x.ai",
             client: "client-b"
         )
+        XCTAssertFalse(unexpiredConsistent.isExpired)
         let picked = try XCTUnwrap(self.makeStore().pick(
-            from: [expiredConsistent, unexpiredOther],
+            from: [expiredConsistent, unexpiredConsistent],
             previousKeys: [:],
             exclude: nil
         ))
         XCTAssertEqual(picked.entry.key, "live")
+    }
+
+    func testExpiredSelfConsistentBeatsUnexpiredMismatched() throws {
+        let expiredConsistent = self.loaded(
+            scope: "https://auth.x.ai::client-a",
+            key: "expired-consistent",
+            expiresAt: self.now.addingTimeInterval(100),
+            issuer: "https://auth.x.ai",
+            client: "client-a"
+        )
+        XCTAssertTrue(expiredConsistent.isExpired)
+        XCTAssertTrue(expiredConsistent.isSelfConsistent)
+        let unexpiredMismatched = self.loaded(
+            scope: "mismatch-scope",
+            key: "live-mismatch",
+            expiresAt: self.now.addingTimeInterval(3600),
+            issuer: "https://auth.x.ai",
+            client: "client-b"
+        )
+        XCTAssertFalse(unexpiredMismatched.isExpired)
+        XCTAssertFalse(unexpiredMismatched.isSelfConsistent)
+        let picked = try XCTUnwrap(self.makeStore().pick(
+            from: [expiredConsistent, unexpiredMismatched],
+            previousKeys: [:],
+            exclude: nil
+        ))
+        XCTAssertEqual(picked.entry.key, "expired-consistent")
     }
 
     func testPickExcludesRejectedKey() throws {
