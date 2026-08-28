@@ -307,3 +307,15 @@ Blocking/major/specViolation items applied in this round:
 - **Active engine still says “Not active”** (`Sources/Fluid/UI/AISettingsView+SpeechRecognition.swift`). When Grok is selected, the row shows the green Active badge but speechModelSubtitle always returns “Grok Speech (xAI) · Not active” once credentials exist (lines 770–778). Suggested: make the subtitle activation-aware or remove the activation state from the subtitle.
 
 - **Outbound drain before audio.done has no explicit deadline** (`Sources/Fluid/Services/GrokSTT/GrokSTTWebSocketSession.swift`). finish() starts its three-second completion timeout only after sendAudioDone returns. That continuation waits behind all queued frames, so a stalled frame send can prolong stop until the transport times out. Suggested: bound the pre-audio.done drain and treat expiry as a retryable pre-done failure.
+
+## PR4 review round 1
+
+### Codex
+
+Approved. No leftover minors.
+
+### Claude
+
+- **`transcribeFile` buffers the whole file plus a full multipart copy in memory** (`Sources/Fluid/Services/GrokSTT/GrokSTTRESTClient.swift`). `transcribeFile` reads with `Data(contentsOf:options:[.mappedIfSafe])`, then `sendMultipart` copies it into `body` via `body.append(file)` and assigns that to `request.httpBody`. At the documented 500 MB ceiling that is ~1 GB+ resident before URLSession takes its own copy, and the 401 retry loop rebuilds the body a second time. Suggested: write the multipart body to a temporary file and use `URLSession.upload(for:fromFile:)` (or `httpBodyStream`) for the file path; at minimum `body.reserveCapacity(file.count + 1024)` and build the body once outside the unauthorized-retry loop.
+
+- **LocalAPI xAI-upload notice is appended to errors that never touched the network** (`Sources/Fluid/Services/LocalAPI/InferenceAPIController.swift`). `InferenceAPIController.transcribe`'s single outer `catch` routes every failure through `GrokSTTCloudUploadCopy.localAPIErrorMessage`, including decode/validation errors raised before any upload (`decodeFilePath` / `decodeUploadedAudioFile`, ASRService's "Audio file is not readable."). A malformed request body therefore answers with "... Grok Speech (xAI) sends audio to xAI. There is no local fallback.", implying an upload that never happened. The unreachable `base.contains(localAPITranscribeNotice)` idempotency guard was deleted in this round as overbuilt; the remaining leftover is to append the notice only around the actual transcription call (`self.transcribeFile(...)`) and leave decode/validation errors as plain `error.localizedDescription`.
