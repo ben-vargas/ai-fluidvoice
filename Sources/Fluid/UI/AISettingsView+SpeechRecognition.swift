@@ -113,9 +113,7 @@ extension VoiceEngineSettingsView {
                                         .font(self.theme.typography.sectionTitle)
                                         .foregroundStyle(self.voiceEngineTitleText)
                                     self.speechModelCard(for: activeModel)
-                                    if activeModel == .grokSTT, self.viewModel.previewSpeechModel == .grokSTT {
-                                        self.grokSTTCredentialsCard
-                                    }
+                                    self.grokSTTCredentialsIfPreviewing(for: activeModel)
                                 }
                             } else {
                                 VStack(alignment: .leading, spacing: 6) {
@@ -136,11 +134,13 @@ extension VoiceEngineSettingsView {
                                     .foregroundStyle(self.voiceEngineTitleText)
                                 VStack(spacing: 8) {
                                     ForEach(otherModels) { model in
-                                        VStack(alignment: .leading, spacing: 8) {
-                                            self.speechModelCard(for: model)
-                                            if model == .grokSTT, self.viewModel.previewSpeechModel == .grokSTT {
-                                                self.grokSTTCredentialsCard
+                                        if model == .grokSTT {
+                                            VStack(alignment: .leading, spacing: 8) {
+                                                self.speechModelCard(for: model)
+                                                self.grokSTTCredentialsIfPreviewing(for: model)
                                             }
+                                        } else {
+                                            self.speechModelCard(for: model)
                                         }
                                     }
                                 }
@@ -162,11 +162,11 @@ extension VoiceEngineSettingsView {
                                 )
                         )
 
-                        if self.viewModel.previewSpeechModel == .grokSTT,
-                           activeModel != .grokSTT,
-                           !otherModels.contains(.grokSTT)
-                        {
-                            self.grokSTTCredentialsCard
+                        if activeModel != .grokSTT, !otherModels.contains(.grokSTT) {
+                            self.grokSTTCredentialsIfPreviewing(
+                                for: .grokSTT,
+                                heading: SettingsStore.SpeechModel.grokSTT.displayName
+                            )
                         }
 
                         Divider().padding(.vertical, 4)
@@ -811,6 +811,25 @@ extension VoiceEngineSettingsView {
         return "Needs credentials"
     }
 
+    @ViewBuilder
+    private func grokSTTCredentialsIfPreviewing(
+        for model: SettingsStore.SpeechModel,
+        heading: String? = nil
+    ) -> some View {
+        if model == .grokSTT, self.viewModel.previewSpeechModel == .grokSTT {
+            if let heading {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(heading)
+                        .font(self.theme.typography.sectionTitle)
+                        .foregroundStyle(self.voiceEngineTitleText)
+                    self.grokSTTCredentialsCard
+                }
+            } else {
+                self.grokSTTCredentialsCard
+            }
+        }
+    }
+
     var grokSTTCredentialsCard: some View {
         self.grokSTTCredentialsPanel
             .padding(12)
@@ -823,6 +842,8 @@ extension VoiceEngineSettingsView {
                             .stroke(self.theme.palette.cardBorder.opacity(0.3), lineWidth: 1)
                     )
             )
+            .opacity(self.viewModel.asr.isRunning ? 0.6 : 1.0)
+            .allowsHitTesting(!self.viewModel.asr.isRunning)
     }
 
     var grokSTTCredentialsPanel: some View {
