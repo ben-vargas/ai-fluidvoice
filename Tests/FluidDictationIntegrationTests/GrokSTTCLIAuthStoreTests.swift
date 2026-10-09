@@ -232,6 +232,32 @@ final class GrokSTTCLIAuthStoreTests: XCTestCase {
         XCTAssertEqual(picked.entry.key, "first-key")
     }
 
+    /// Grok CLI 1.0.x writes scope keys with escaped slashes (`https:\/\/auth.x.ai::…`).
+    func testEscapedSlashScopeKeysAreLoadedSelfConsistentAndKeepFileOrder() throws {
+        let json = #"""
+        {
+          "https:\/\/auth.x.ai::second": {
+            "key": "second-key",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "oidc_issuer": "https:\/\/auth.x.ai",
+            "oidc_client_id": "second"
+          },
+          "https:\/\/auth.x.ai::first": {
+            "key": "first-key",
+            "expires_at": "2099-01-01T00:00:00Z",
+            "oidc_issuer": "https://auth.x.ai",
+            "oidc_client_id": "first"
+          }
+        }
+        """#
+        let store = self.makeStore()
+        let entries = try store.decodeEntries(from: Data(json.utf8))
+        XCTAssertEqual(entries.map(\.scopeKey), ["https://auth.x.ai::second", "https://auth.x.ai::first"])
+        XCTAssertTrue(entries.allSatisfy(\.isSelfConsistent))
+        let picked = try XCTUnwrap(store.pick(from: entries, previousKeys: [:], exclude: nil))
+        XCTAssertEqual(picked.entry.key, "second-key")
+    }
+
     func testBinaryLocatorDoesNotUseBareGrokAndHonorsOverride() throws {
         let files = MemoryGrokSTTFileSystem()
         files.executables.insert("/opt/custom/bin/grok")

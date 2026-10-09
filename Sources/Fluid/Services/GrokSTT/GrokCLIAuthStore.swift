@@ -167,8 +167,9 @@ nonisolated struct GrokCLIAuthStore: Sendable {
             throw GrokSTTError.grokStoreParseFailed
         }
 
+        // File order only breaks scoring ties; it must never drop a decoded entry.
         let orderedKeys = GrokCLIOrderedJSONKeys.keys(in: data)
-        let keys = orderedKeys.isEmpty ? Array(object.keys) : orderedKeys
+        let keys = orderedKeys + object.keys.filter { !orderedKeys.contains($0) }.sorted()
         let now = self.now()
         var loaded: [GrokCLIAuthLoadedEntry] = []
         loaded.reserveCapacity(object.count)
@@ -319,7 +320,7 @@ nonisolated enum GrokCLIOrderedJSONKeys {
                 } else if character == "\"" {
                     inString = false
                     if collectingKey, let keyStart {
-                        keys.append(String(text[keyStart..<index]))
+                        keys.append(Self.unescaped(String(text[keyStart..<index])))
                         collectingKey = false
                         expectingKey = false
                     }
@@ -340,5 +341,12 @@ nonisolated enum GrokCLIOrderedJSONKeys {
             index = text.index(after: index)
         }
         return keys
+    }
+
+    /// Raw key text keeps JSON escapes (Grok CLI writes `https:\/\/auth.x.ai::…`);
+    /// decode it so it matches the keys JSONDecoder produced.
+    private static func unescaped(_ raw: String) -> String {
+        guard raw.contains("\\") else { return raw }
+        return (try? JSONDecoder().decode(String.self, from: Data("\"\(raw)\"".utf8))) ?? raw
     }
 }
