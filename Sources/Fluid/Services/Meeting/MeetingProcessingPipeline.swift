@@ -577,6 +577,7 @@ private final class MeetingProviderLanguagePin {
         case apple(String)
         case cohere(SettingsStore.CohereLanguage)
         case nemotron(SettingsStore.NemotronLanguage)
+        case grok(String)
     }
 
     private enum Restoration {
@@ -584,6 +585,7 @@ private final class MeetingProviderLanguagePin {
         case apple(String)
         case cohere(SettingsStore.CohereLanguage)
         case nemotron(SettingsStore.NemotronLanguage)
+        case grok(String?)
     }
 
     let languageCode: String
@@ -592,6 +594,16 @@ private final class MeetingProviderLanguagePin {
     private let restoration: Restoration
 
     init?(languageCode: String, model: SettingsStore.SpeechModel, settings: SettingsStore) {
+        if model == .grokSTT {
+            // Grok is not in the language catalog (it is never an onboarding route).
+            guard let code = GrokSTTLanguage.normalized(languageCode) else { return nil }
+            self.languageCode = code
+            self.settings = settings
+            self.desired = .grok(code)
+            self.restoration = .grok(settings.selectedGrokSTTLanguageCode)
+            self.apply()
+            return
+        }
         guard let route = VoiceEngineLanguageCatalog.routes(
             forLanguageID: languageCode,
             availableModels: [model]
@@ -621,6 +633,7 @@ private final class MeetingProviderLanguagePin {
         case let .apple(identifier): self.settings.selectedAppleSpeechLocaleIdentifier = identifier
         case let .cohere(language): self.settings.selectedCohereLanguage = language
         case let .nemotron(language): self.settings.selectedNemotronLanguage = language
+        case let .grok(code): self.settings.selectedGrokSTTLanguageCode = code
         }
     }
 
@@ -634,6 +647,8 @@ private final class MeetingProviderLanguagePin {
             self.settings.selectedCohereLanguage = language
         case let .nemotron(language):
             self.settings.selectedNemotronLanguage = language
+        case let .grok(code):
+            self.settings.selectedGrokSTTLanguageCode = code
         }
     }
 }
@@ -1394,7 +1409,9 @@ final class MeetingProcessingPipeline: MeetingProcessingControlling {
             self.backendIDProvider = { _ in registryDefault }
         } else {
             self.backendIDProvider = { _ in
-                SettingsStore.shared.meetingTranscriptionBackendID.forNewMeetingAttempt
+                // Cloud engines go through the legacy path, the one that transcribes with the selected engine.
+                if SettingsStore.shared.selectedSpeechModel.isCloudEngine { return .legacyCompatibility }
+                return SettingsStore.shared.meetingTranscriptionBackendID.forNewMeetingAttempt
             }
         }
     }

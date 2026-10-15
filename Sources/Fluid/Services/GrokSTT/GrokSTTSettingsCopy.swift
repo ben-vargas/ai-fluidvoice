@@ -5,7 +5,8 @@ nonisolated enum GrokSTTSettingsCopy {
     static let badge = "Cloud · Experimental"
 
     static let cardDescription =
-        "Live cloud dictation from xAI. Your microphone audio is sent to xAI (api.x.ai/v1/stt), so this is opt-in and not local-first."
+        "Live cloud dictation from xAI. Dictation, file and meeting audio is sent to xAI (api.x.ai/v1/stt), " +
+        "so this is opt-in and not local-first."
 
     static let apiKeyConfigured = "Using the xAI key saved under AI Providers."
     static let apiKeyMissing = "No xAI key yet. Add one under AI Providers (AI Enhancement), then come back to activate."

@@ -124,6 +124,15 @@ final class GrokSTTRESTClientTests: XCTestCase {
         XCTAssertEqual(GrokSTTRESTClient.meetingTimeout(durationSeconds: .infinity), 600)
     }
 
+    func testOnlyContainersXAIDetectsAreUploadedAsIs() {
+        for name in ["a.wav", "b.MP3", "c.m4a", "d.flac", "e.ogg", "f.opus", "g.aac"] {
+            XCTAssertTrue(GrokSTTRESTClient.acceptsNativeUpload(URL(fileURLWithPath: "/tmp/\(name)")), name)
+        }
+        for name in ["chunk.caf", "take.aiff", "clip.webm", "movie.mov", "noext"] {
+            XCTAssertFalse(GrokSTTRESTClient.acceptsNativeUpload(URL(fileURLWithPath: "/tmp/\(name)")), name)
+        }
+    }
+
     func testM4AIsNotAVideoContainer() {
         XCTAssertFalse(GrokSTTRESTClient.isVideoContainer(URL(fileURLWithPath: "/tmp/clip.m4a")))
         XCTAssertFalse(GrokSTTRESTClient.isVideoContainer(URL(fileURLWithPath: "/tmp/clip.wav")))
