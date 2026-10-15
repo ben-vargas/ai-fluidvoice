@@ -1,6 +1,58 @@
 import SwiftUI
 
-/// Credentials for Grok Speech, shown while previewing it in Voice Engine settings.
+extension VoiceEngineSettingsView {
+    /// A model row in the Voice Engine list. While Grok Speech is previewed, its sign-in options sit
+    /// under its row. They belong inside the scrolling list: in the fixed header above it, their height
+    /// raised the window's minimum height past the screen.
+    @ViewBuilder
+    func speechModelRow(for model: SettingsStore.SpeechModel) -> some View {
+        if model == .grokSTT {
+            VStack(alignment: .leading, spacing: 6) {
+                self.speechModelCard(for: model)
+
+                if self.viewModel.previewSpeechModel == model {
+                    GrokSTTCredentialsPanel(settings: self.settings, theme: self.theme)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(self.theme.palette.cardBackground.opacity(0.5))
+                        )
+                        .padding(.leading, 56)
+                }
+            }
+        } else {
+            self.speechModelCard(for: model)
+        }
+    }
+}
+
+/// One-line sign-in status for the Voice Engine header. It never wraps, so the header keeps its height.
+struct GrokSTTStatusLine: View {
+    @ObservedObject var settings: SettingsStore
+    let theme: AppTheme
+
+    var body: some View {
+        let isReady = GrokSTTCredentialsPanel.canActivate(.grokSTT)
+        Label(self.text(isReady: isReady), systemImage: isReady ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+            .font(self.theme.typography.bodySmall)
+            .foregroundStyle(isReady ? Color.fluidGreen : .orange)
+            .lineLimit(1)
+            .truncationMode(.tail)
+    }
+
+    private func text(isReady: Bool) -> String {
+        switch self.settings.grokSTTAuthMode {
+        case .apiKey:
+            return isReady ? "Signs in with your xAI API key" : "Needs an xAI API key from AI Providers"
+        case .grokCLISession:
+            return isReady ? "Signs in with your Grok CLI session" : "No Grok CLI session found"
+        }
+    }
+}
+
+/// Credentials for Grok Speech, shown under the Grok row while it is previewed in Voice Engine settings.
 /// The API key itself lives under AI Providers; this only picks how Grok Speech signs in.
 struct GrokSTTCredentialsPanel: View {
     @ObservedObject var settings: SettingsStore
