@@ -1403,8 +1403,7 @@ final class MeetingProcessingPipeline: MeetingProcessingControlling {
             self.backendIDProvider = { _ in registryDefault }
         } else {
             self.backendIDProvider = { languageCode in
-                // Cloud engines go through the legacy path, the one that transcribes with the selected engine.
-                if SettingsStore.shared.selectedSpeechModel.isCloudEngine { return .legacyCompatibility }
+                if SettingsStore.shared.selectedSpeechModel == .grokSTT { return .grokSTT }
                 let saved = SettingsStore.shared.meetingTranscriptionBackendID
                 // Preserve English rollback settings; non-English recordings need the current backend.
                 return saved == .legacyCompatibility && languageCode != "en" ? .productionDefault : saved

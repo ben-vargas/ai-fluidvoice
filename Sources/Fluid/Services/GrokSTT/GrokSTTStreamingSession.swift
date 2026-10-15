@@ -44,8 +44,8 @@ nonisolated protocol StreamingTranscriptionSession: AnyObject, Sendable {
     /// (created raced stop; pump sent nothing). Illegal once the pump has appended.
     func handoffUnsentPCM(_ samples: [Float])
 
-    /// Send `{"type":"audio.done"}`, wait for `transcript.done` (or timeout with non-empty
-    /// assembled text = success). Returns assembled / server text. Throws if nothing produced.
+    /// Send `{"type":"audio.done"}` and wait for `transcript.done`. Returns the final text.
+    /// Throws on timeout or a drop before `transcript.done`, even when interim text exists.
     /// If `handoffUnsentPCM` was called, send that
     /// copy from sample 0 after `created`, then `audio.done`.
     @concurrent func finish() async throws -> String

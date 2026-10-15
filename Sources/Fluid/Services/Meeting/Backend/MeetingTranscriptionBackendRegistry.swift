@@ -27,6 +27,9 @@ final class MeetingTranscriptionBackendRegistry {
         registry.register(.parakeetNemotron) { context in
             MeetingParakeetNemotronBackend(runtimeFactory: context.parakeetNemotronRuntimeFactory)
         }
+        registry.register(.grokSTT) { context in
+            GrokMeetingTranscriptionBackend(legacyExecutor: context.legacyExecutor)
+        }
         return registry
     }
 

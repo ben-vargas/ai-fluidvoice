@@ -128,7 +128,7 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         XCTAssertNotNil(session.transportError)
     }
 
-    func testPostDoneTransportErrorWithTextSucceeds() async throws {
+    func testPostDoneTransportErrorFailsInsteadOfReturningPartials() async throws {
         let transport = FakeGrokSTTWebSocketTransport()
         let connection = FakeGrokSTTWebSocketConnection()
         transport.enqueueConnection(connection)
@@ -146,9 +146,13 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         let finish = Task.detached { try await session.finish() }
         await grokSTTAssertEventually { session.debugAudioDoneSent }
         connection.emitError(GrokSTTError.socketClosed(code: 1006))
-        let text = try await finish.value
-        XCTAssertEqual(text, "kept")
-        await grokSTTAssertEventually { connection.closed }
+        do {
+            _ = try await finish.value
+            XCTFail("a drop before transcript.done must not promote partials to final text")
+        } catch {
+            XCTAssertEqual(error as? GrokSTTError, .socketClosed(code: 1006))
+        }
+        XCTAssertEqual(session.transcript, "kept")
         session.cancel()
         XCTAssertTrue(connection.closed)
     }
@@ -530,7 +534,7 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         XCTAssertEqual(transport.debugLastConnection?.debugRetainsURLSession, false)
     }
 
-    func testPartialDoneTimeoutSucceedsAndCloses() async throws {
+    func testPartialDoneTimeoutFailsAndCloses() async throws {
         let transport = FakeGrokSTTWebSocketTransport()
         let connection = FakeGrokSTTWebSocketConnection()
         transport.enqueueConnection(connection)
@@ -546,10 +550,14 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         try await start.value
         connection.emitJSON(["type": "transcript.partial", "start": 0, "text": "kept-on-timeout"])
 
-        let text = try await Task.detached { try await session.finish() }.value
-        XCTAssertEqual(text, "kept-on-timeout")
+        do {
+            _ = try await Task.detached { try await session.finish() }.value
+            XCTFail("a missing transcript.done must not promote partials to final text")
+        } catch {
+            XCTAssertEqual(error as? GrokSTTError, .timeout)
+        }
         XCTAssertTrue(connection.closed)
         XCTAssertTrue(session.debugAudioDoneSent)
-        XCTAssertEqual(session.currentState, .complete)
+        XCTAssertEqual(session.currentState, .failed)
     }
 }

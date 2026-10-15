@@ -19,6 +19,7 @@
 		6B0C57000000000000000802 /* GrokSTTTranscriptAssemblerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B0C57000000000000000801 /* GrokSTTTranscriptAssemblerTests.swift */; };
 		6B0C57000000000000000902 /* GrokSTTWebSocketSessionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B0C57000000000000000901 /* GrokSTTWebSocketSessionTests.swift */; };
 		6B0C57000000000000000A02 /* GrokSTTWebSocketTestDoubles.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B0C57000000000000000A01 /* GrokSTTWebSocketTestDoubles.swift */; };
+		6B0C57000000000000000F02 /* GrokMeetingTranscriptionBackendTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B0C57000000000000000F01 /* GrokMeetingTranscriptionBackendTests.swift */; };
 		AD1030000000000000000002 /* HoldToMuteTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AD1030000000000000000001 /* HoldToMuteTests.swift */; };
 		D63B0F8456B440F1A123B987 /* PronunciationModelRevisionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFA73C8D5E7647C4AB125DEE /* PronunciationModelRevisionTests.swift */; };
 		5D4A9F54826FD6BB32CE13F8 /* SpeechModelInstallationSnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D47EF42AC1B641A705AC302 /* SpeechModelInstallationSnapshotTests.swift */; };
@@ -222,6 +223,7 @@
 		6B0C57000000000000000801 /* GrokSTTTranscriptAssemblerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTTranscriptAssemblerTests.swift; sourceTree = "<group>"; };
 		6B0C57000000000000000901 /* GrokSTTWebSocketSessionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTWebSocketSessionTests.swift; sourceTree = "<group>"; };
 		6B0C57000000000000000A01 /* GrokSTTWebSocketTestDoubles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokSTTWebSocketTestDoubles.swift; sourceTree = "<group>"; };
+		6B0C57000000000000000F01 /* GrokMeetingTranscriptionBackendTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GrokMeetingTranscriptionBackendTests.swift; sourceTree = "<group>"; };
 		AD1030000000000000000001 /* HoldToMuteTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HoldToMuteTests.swift; sourceTree = "<group>"; };
 		AFA73C8D5E7647C4AB125DEE /* PronunciationModelRevisionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PronunciationModelRevisionTests.swift; sourceTree = "<group>"; };
 		7D47EF42AC1B641A705AC302 /* SpeechModelInstallationSnapshotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeechModelInstallationSnapshotTests.swift; sourceTree = "<group>"; };
@@ -504,6 +506,7 @@
 				6B0C57000000000000000801 /* GrokSTTTranscriptAssemblerTests.swift */,
 				6B0C57000000000000000901 /* GrokSTTWebSocketSessionTests.swift */,
 				6B0C57000000000000000A01 /* GrokSTTWebSocketTestDoubles.swift */,
+				6B0C57000000000000000F01 /* GrokMeetingTranscriptionBackendTests.swift */,
 				AD1030000000000000000001 /* HoldToMuteTests.swift */,
 				DAB600000000000000000002 /* DashboardLayoutTests.swift */,
 				FEB700000000000000000002 /* FeedbackClientTests.swift */,
@@ -918,6 +921,7 @@
 				6B0C57000000000000000802 /* GrokSTTTranscriptAssemblerTests.swift in Sources */,
 				6B0C57000000000000000902 /* GrokSTTWebSocketSessionTests.swift in Sources */,
 				6B0C57000000000000000A02 /* GrokSTTWebSocketTestDoubles.swift in Sources */,
+				6B0C57000000000000000F02 /* GrokMeetingTranscriptionBackendTests.swift in Sources */,
 				AD1030000000000000000002 /* HoldToMuteTests.swift in Sources */,
 				DAB600000000000000000001 /* DashboardLayoutTests.swift in Sources */,
 				FEB700000000000000000001 /* FeedbackClientTests.swift in Sources */,

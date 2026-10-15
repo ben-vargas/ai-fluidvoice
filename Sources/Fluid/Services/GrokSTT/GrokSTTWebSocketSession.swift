@@ -511,25 +511,10 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
         self.closeConnection()
     }
 
+    /// Interim text is never final: a drop before `transcript.done`, even after `audio.done`,
+    /// fails so the controller re-sends the whole recording over REST.
     private func handleTransportFailure(_ error: Error) {
-        let mapped = self.mapError(error)
-        let audioDone = self.lock.withLock { self.audioDoneSent }
-        if audioDone {
-            let assembled = self.transcript
-            if !assembled.isEmpty {
-                self.lock.withLock {
-                    if self.state != .cancelled {
-                        self.state = .complete
-                    }
-                }
-                self.resumeFinishWaiters(.success(assembled))
-                self.closeConnection()
-                return
-            }
-            self.fail(mapped, close: false)
-            return
-        }
-        self.fail(mapped, close: false)
+        self.fail(self.mapError(error), close: false)
     }
 
     private func fail(_ error: GrokSTTError, close: Bool) {
@@ -743,37 +728,14 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
                     self.resumeFinishWaiters(.success(text))
                     return text
                 case .timedOut:
-                    let assembled = self.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if assembled.isEmpty {
-                        self.fail(.timeout, close: true)
-                        group.cancelAll()
-                        throw GrokSTTError.timeout
-                    }
-                    self.lock.withLock {
-                        if self.state != .cancelled {
-                            self.state = .complete
-                        }
-                    }
-                    self.resumeFinishWaiters(.success(assembled))
-                    self.closeConnection()
+                    // Interim text may still lack the last words, so a missing
+                    // `transcript.done` is a failure and the controller falls back to REST.
+                    self.fail(.timeout, close: true)
                     group.cancelAll()
-                    return assembled
+                    throw GrokSTTError.timeout
                 }
             }
         } catch let error as GrokSTTError {
-            if error == .timeout {
-                let assembled = self.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !assembled.isEmpty {
-                    self.lock.withLock {
-                        if self.state != .cancelled {
-                            self.state = .complete
-                        }
-                    }
-                    self.resumeFinishWaiters(.success(assembled))
-                    self.closeConnection()
-                    return assembled
-                }
-            }
             throw error
         } catch is CancellationError {
             throw self.lock.withLock({ self.stickyError }) ?? GrokSTTError.cancelled
