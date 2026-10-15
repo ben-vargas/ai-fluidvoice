@@ -25,6 +25,14 @@ final class GrokSTTLanguageTests: XCTestCase {
         XCTAssertEqual(SettingsStore.grokSTTAuthMode(fromStoredValue: "grokCLISession"), .grokCLISession)
     }
 
+    func testUnsetAuthModeUsesSavedKeyThenCLISession() {
+        XCTAssertEqual(SettingsStore.grokSTTAuthMode(fromStoredValue: nil, hasAPIKey: true, hasCLISession: true), .apiKey)
+        XCTAssertEqual(SettingsStore.grokSTTAuthMode(fromStoredValue: nil, hasAPIKey: false, hasCLISession: true), .grokCLISession)
+        XCTAssertEqual(SettingsStore.grokSTTAuthMode(fromStoredValue: nil, hasAPIKey: false, hasCLISession: false), .apiKey)
+        XCTAssertEqual(SettingsStore.grokSTTAuthMode(fromStoredValue: "apiKey", hasAPIKey: false, hasCLISession: true), .apiKey)
+        XCTAssertEqual(SettingsStore.grokSTTAuthMode(fromStoredValue: "grokCLISession", hasAPIKey: true, hasCLISession: false), .grokCLISession)
+    }
+
     @MainActor
     func testGrokSpeechIsAnOptInCloudEngine() {
         let model = SettingsStore.SpeechModel.grokSTT

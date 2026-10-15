@@ -7,19 +7,32 @@ extension VoiceEngineSettingsView {
     @ViewBuilder
     func speechModelRow(for model: SettingsStore.SpeechModel) -> some View {
         if model == .grokSTT {
-            VStack(alignment: .leading, spacing: 6) {
-                self.speechModelCard(for: model)
+            ScrollViewReader { proxy in
+                VStack(alignment: .leading, spacing: 6) {
+                    self.speechModelCard(for: model)
 
-                if self.viewModel.previewSpeechModel == model {
-                    GrokSTTCredentialsPanel(settings: self.settings, theme: self.theme)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(self.theme.palette.cardBackground.opacity(0.5))
-                        )
-                        .padding(.leading, 56)
+                    if self.viewModel.previewSpeechModel == model {
+                        GrokSTTCredentialsPanel(settings: self.settings, theme: self.theme)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(self.theme.palette.cardBackground.opacity(0.5))
+                            )
+                            .padding(.leading, 56)
+                            .id(GrokSTTCredentialsPanel.scrollID)
+                    }
+                }
+                .onChange(of: self.viewModel.previewSpeechModel) { _, newValue in
+                    guard newValue == .grokSTT else { return }
+                    // Grok is often the last row, so its options would open below the visible list.
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 50_000_000)
+                        withAnimation(.easeInOut(duration: 0.25)) {
+                            proxy.scrollTo(GrokSTTCredentialsPanel.scrollID, anchor: .bottom)
+                        }
+                    }
                 }
             }
         } else {
@@ -58,6 +71,8 @@ struct GrokSTTCredentialsPanel: View {
     @ObservedObject var settings: SettingsStore
     let theme: AppTheme
 
+    static let scrollID = "grok-stt-credentials-panel"
+
     @State private var cliStatus: GrokCLISessionStatus = .missing
     @State private var cliPathDraft = ""
 
@@ -68,8 +83,7 @@ struct GrokSTTCredentialsPanel: View {
         case .apiKey:
             return GrokSTTSharedXAIKeyStore().hasAPIKey
         case .grokCLISession:
-            let path = GrokCLIAuthStore().resolvePath()
-            return !path.isEmpty && FileManager.default.fileExists(atPath: path)
+            return SettingsStore.hasGrokCLISessionFile
         }
     }
 

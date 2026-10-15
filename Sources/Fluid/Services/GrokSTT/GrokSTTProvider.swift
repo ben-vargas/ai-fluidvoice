@@ -44,6 +44,7 @@ final class GrokSTTProvider: LiveSessionTranscriptionProvider {
 
     func prepare(progressHandler: ((ModelPreparationProgress) -> Void)?) async throws {
         progressHandler?(.loading)
+        SettingsStore.shared.saveGrokSTTAuthModeIfUnset()
         // Only checks that the selected sign-in exists. ASRService awaits this after capture
         // has stopped, so a network refresh here could lose the recording on failure. Resolving
         // (and refreshing an expired Grok CLI session) happens per request instead, where a
