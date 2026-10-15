@@ -112,6 +112,9 @@ final class GrokSTTProvider: LiveSessionTranscriptionProvider {
 
     func transcribeFile(at fileURL: URL) async throws -> ASRTranscriptionResult {
         let configuration = Self.currentConfiguration()
+        guard GrokSTTRESTClient.acceptsNativeUpload(fileURL) else {
+            return try await self.transcribeDecodedFile(at: fileURL, configuration: configuration)
+        }
         do {
             let text = try await self.restClient.transcribeFile(
                 at: fileURL,
@@ -122,6 +125,38 @@ final class GrokSTTProvider: LiveSessionTranscriptionProvider {
         } catch GrokSTTError.emptyTranscript {
             return ASRTranscriptionResult(text: "", confidence: 0)
         }
+    }
+
+    /// xAI rejects some containers FluidVoice reads, including the CAF chunks meetings
+    /// record. Decode those to 16 kHz mono and upload WAV, at most 20 minutes per request.
+    private func transcribeDecodedFile(
+        at fileURL: URL,
+        configuration: GrokSTTDictationController.Configuration
+    ) async throws -> ASRTranscriptionResult {
+        let reader: LocalAPIAudioDecoder.ChunkReader
+        do {
+            reader = try LocalAPIAudioDecoder.ChunkReader(fileURL: fileURL)
+        } catch {
+            throw GrokSTTError.unsupportedFile
+        }
+        var parts: [String] = []
+        while true {
+            let samples = try await reader.nextSamples()
+            guard !samples.isEmpty else { break }
+            let duration = Double(samples.count) / Double(GrokSTTAudioConverter.sampleRate)
+            do {
+                let text = try await self.restClient.transcribePCM(
+                    samples,
+                    languageCode: configuration.languageCode,
+                    keyterms: configuration.keyterms,
+                    timeout: GrokSTTRESTClient.meetingTimeout(durationSeconds: duration)
+                )
+                parts.append(text)
+            } catch GrokSTTError.emptyTranscript {
+                continue
+            }
+        }
+        return ASRTranscriptionResult(text: parts.joined(separator: " "), confidence: parts.isEmpty ? 0 : 1)
     }
 
     // MARK: - REST

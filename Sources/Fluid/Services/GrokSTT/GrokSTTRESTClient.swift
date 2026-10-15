@@ -40,6 +40,14 @@ final nonisolated class GrokSTTRESTClient: @unchecked Sendable {
         return min(self.meetingTimeoutCap, 30 + (2 * durationSeconds))
     }
 
+    /// Containers xAI detects on its own. Anything else, such as the CAF chunks meetings
+    /// record, is decoded and sent as WAV by the provider instead.
+    static let nativeUploadExtensions: Set<String> = ["wav", "wave", "mp3", "ogg", "oga", "opus", "flac", "aac", "m4a"]
+
+    static func acceptsNativeUpload(_ fileURL: URL) -> Bool {
+        self.nativeUploadExtensions.contains(fileURL.pathExtension.lowercased())
+    }
+
     static func isVideoContainer(_ fileURL: URL) -> Bool {
         let ext = fileURL.pathExtension
         guard !ext.isEmpty, let type = UTType(filenameExtension: ext) else {
