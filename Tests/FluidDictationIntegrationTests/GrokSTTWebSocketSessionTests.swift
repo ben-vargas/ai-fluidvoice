@@ -100,6 +100,32 @@ final class GrokSTTWebSocketSessionTests: XCTestCase {
         XCTAssertTrue(session.debugAudioDoneSent)
     }
 
+    func testUtteranceFinalRestatementIsNotAppendedToItsPieces() async throws {
+        let transport = FakeGrokSTTWebSocketTransport()
+        let connection = FakeGrokSTTWebSocketConnection()
+        transport.enqueueConnection(connection)
+        let session = GrokSTTWebSocketSession(
+            configuration: .grokDictation,
+            resolver: RecordingGrokSTTResolver(),
+            transport: transport
+        )
+        let start = Task.detached { try await session.start() }
+        await grokSTTAssertEventually { transport.connections.count == 1 }
+        connection.emitJSON(["type": "transcript.created"])
+        try await start.value
+        connection.emitJSON(["type": "transcript.partial", "start": 0, "text": "debug builds.", "is_final": true, "speech_final": false])
+        connection.emitJSON(["type": "transcript.partial", "start": 1.5, "text": "Using Grok.", "is_final": false, "speech_final": false])
+        connection.emitJSON([
+            "type": "transcript.partial", "start": 0, "text": "debug builds. Using Grok.", "is_final": true, "speech_final": true,
+        ])
+
+        let finish = Task.detached { try await session.finish() }
+        await grokSTTAssertEventually { connection.sentText.contains { $0.contains("audio.done") } }
+        connection.emitJSON(["type": "transcript.done", "text": ""])
+        let text = try await finish.value
+        XCTAssertEqual(text, "debug builds. Using Grok.")
+    }
+
     func testPreAudioDoneDropDoesNotReturnPartials() async throws {
         let transport = FakeGrokSTTWebSocketTransport()
         let connection = FakeGrokSTTWebSocketConnection()

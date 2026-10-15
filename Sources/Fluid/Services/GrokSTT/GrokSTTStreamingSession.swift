@@ -17,7 +17,7 @@ nonisolated struct StreamingSTTSessionConfiguration: Sendable, Equatable {
 /// One dictation = one session. Not reused across recordings.
 /// Isolated to the session’s URLSession delegate queue, not MainActor.
 nonisolated protocol StreamingTranscriptionSession: AnyObject, Sendable {
-    /// Last-write-wins assembled text. Empty interims are suppressed by the assembler.
+    /// Assembled live text (see `GrokSTTTranscriptAssembler`). Empty interims are suppressed.
     /// Thread-safe snapshot (session queue lock).
     var transcript: String { get }
 

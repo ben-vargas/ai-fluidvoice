@@ -435,7 +435,11 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
         case "transcript.created":
             self.markCreated()
         case "transcript.partial":
-            self.recordPartial(start: event.start ?? 0, text: event.text ?? "")
+            self.recordPartial(
+                start: event.start ?? 0,
+                text: event.text ?? "",
+                isUtteranceFinal: event.isFinal == true && event.speechFinal == true
+            )
         case "transcript.done":
             self.recordDone(text: event.text ?? "")
         case "error":
@@ -466,7 +470,7 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
         waiters.forEach { $0.resume() }
     }
 
-    private func recordPartial(start: Double, text: String) {
+    private func recordPartial(start: Double, text: String, isUtteranceFinal: Bool) {
         let snapshot: String
         let firstByteMs: Int?
         self.lock.lock()
@@ -477,14 +481,14 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
             firstByte = GrokSTTLog.milliseconds(since: self.connectStartedAt)
         }
         firstByteMs = firstByte
-        self.assembler.record(start: start, text: text)
+        self.assembler.record(start: start, text: text, isUtteranceFinal: isUtteranceFinal)
         snapshot = self.assembler.transcript
         self.lock.unlock()
         if let firstByteMs {
             GrokSTTLog.info("first-byte ms=\(firstByteMs)")
         }
         if !text.isEmpty {
-            GrokSTTLog.debug("partial text=\(GrokSTTLog.truncatedTranscript(text))")
+            GrokSTTLog.debug("partial start=\(start) utteranceFinal=\(isUtteranceFinal) text=\(GrokSTTLog.truncatedTranscript(text))")
         }
         let handler = self.onPartial
         guard !snapshot.isEmpty, let handler else { return }
@@ -925,5 +929,16 @@ private nonisolated struct GrokSTTServerEvent: Decodable, Sendable {
     let type: String
     let text: String?
     let start: Double?
+    let isFinal: Bool?
+    let speechFinal: Bool?
     let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case text
+        case start
+        case isFinal = "is_final"
+        case speechFinal = "speech_final"
+        case message
+    }
 }
