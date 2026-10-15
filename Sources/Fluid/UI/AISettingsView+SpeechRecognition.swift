@@ -78,7 +78,7 @@ extension VoiceEngineSettingsView {
                                     Text("Active Model")
                                         .font(self.theme.typography.sectionTitle)
                                         .foregroundStyle(self.voiceEngineTitleText)
-                                    self.speechModelCard(for: activeModel)
+                                    self.speechModelRow(for: activeModel)
                                 }
                             } else {
                                 VStack(alignment: .leading, spacing: 6) {
@@ -107,7 +107,7 @@ extension VoiceEngineSettingsView {
                                     .foregroundStyle(self.voiceEngineTitleText)
                                 VStack(spacing: 8) {
                                     ForEach(otherModels) { model in
-                                        self.speechModelCard(for: model)
+                                        self.speechModelRow(for: model)
                                     }
                                 }
                             }
@@ -173,7 +173,7 @@ extension VoiceEngineSettingsView {
                         }
 
                         if model == .grokSTT {
-                            GrokSTTCredentialsPanel(settings: self.settings, theme: self.theme)
+                            GrokSTTStatusLine(settings: self.settings, theme: self.theme)
                         }
                     }
 
