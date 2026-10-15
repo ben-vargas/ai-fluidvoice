@@ -44,12 +44,13 @@ final class GrokSTTProvider: LiveSessionTranscriptionProvider {
 
     func prepare(progressHandler: ((ModelPreparationProgress) -> Void)?) async throws {
         progressHandler?(.loading)
-        // Resolving proves a credential exists (and refreshes an expired Grok CLI
-        // session) without sending audio. It never switches between auth modes.
-        let resolver = self.resolver
-        _ = try await Task.detached {
-            try await resolver.resolveCredential()
-        }.value
+        // Only checks that the selected sign-in exists. ASRService awaits this after capture
+        // has stopped, so a network refresh here could lose the recording on failure. Resolving
+        // (and refreshing an expired Grok CLI session) happens per request instead, where a
+        // failure keeps the audio for Retry.
+        guard self.resolver.isSourceConfigured else {
+            throw GrokSTTError.noCredentialConfigured
+        }
         self.hasPrepared = true
     }
 

@@ -1409,8 +1409,7 @@ final class MeetingProcessingPipeline: MeetingProcessingControlling {
             self.backendIDProvider = { _ in registryDefault }
         } else {
             self.backendIDProvider = { _ in
-                // Cloud engines go through the legacy path, the one that transcribes with the selected engine.
-                if SettingsStore.shared.selectedSpeechModel.isCloudEngine { return .legacyCompatibility }
+                if SettingsStore.shared.selectedSpeechModel == .grokSTT { return .grokSTT }
                 return SettingsStore.shared.meetingTranscriptionBackendID.forNewMeetingAttempt
             }
         }
