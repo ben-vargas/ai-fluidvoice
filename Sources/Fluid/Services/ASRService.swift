@@ -1072,6 +1072,7 @@ final class ASRService: ObservableObject {
     private var nemotronProviders: [NemotronProvider.Mode: NemotronProvider] = [:]
     private var whisperProvider: WhisperProvider?
     private var appleSpeechProvider: AppleSpeechProvider?
+    private var grokSTTProvider: GrokSTTProvider?
     /// Stored as Any? because @available cannot be applied to stored properties
     private var _appleSpeechAnalyzerProvider: Any?
 
@@ -1181,6 +1182,7 @@ final class ASRService: ObservableObject {
         self.whisperProvider = nil
         self.appleSpeechProvider = nil
         self._appleSpeechAnalyzerProvider = nil
+        self.grokSTTProvider = nil
         self.isAsrReady = false
         self.isLoadingModel = false
         self.isDownloadingModel = false
@@ -1215,6 +1217,8 @@ final class ASRService: ObservableObject {
             return self.getNemotronProvider(mode: model.nemotronProviderMode)
         case .qwen3Asr:
             return self.getFluidAudioProvider()
+        case .grokSTT:
+            return self.getGrokSTTProvider()
         default:
             return self.getWhisperProvider()
         }
@@ -1280,6 +1284,16 @@ final class ASRService: ObservableObject {
         let provider = AppleSpeechProvider()
         self.appleSpeechProvider = provider
         DebugLogger.shared.info("ASRService: Created AppleSpeech provider", source: "ASRService")
+        return provider
+    }
+
+    private func getGrokSTTProvider() -> GrokSTTProvider {
+        if let existing = self.grokSTTProvider {
+            return existing
+        }
+        let provider = GrokSTTProvider()
+        self.grokSTTProvider = provider
+        DebugLogger.shared.info("ASRService: Created Grok Speech provider", source: "ASRService")
         return provider
     }
 
@@ -1349,6 +1363,8 @@ final class ASRService: ObservableObject {
         case .qwen3Asr:
             // Qwen support removed; route legacy requests to Parakeet v3.
             return FluidAudioProvider(modelOverride: .parakeetTDT, configureWordBoosting: false)
+        case .grokSTT:
+            return GrokSTTProvider()
         default:
             // Whisper models - create provider with specific model override
             return WhisperProvider(modelOverride: model)
@@ -1553,6 +1569,7 @@ final class ASRService: ObservableObject {
         self.whisperProvider = nil
         self.appleSpeechProvider = nil
         self._appleSpeechAnalyzerProvider = nil
+        self.grokSTTProvider = nil
 
         // CRITICAL FIX: Check if the NEW model's files exist on disk
         // This prevents UI from showing "Download" when model is already downloaded
@@ -2916,6 +2933,9 @@ final class ASRService: ObservableObject {
         self.benchmarkCompletedStreamingChunks = 0
         self.benchmarkLastChunkSampleCount = 0
         (self.transcriptionProvider as? FluidAudioProvider)?.resetStreamingPreviewCache()
+        if !forDictionaryTraining {
+            (self.transcriptionProvider as? LiveSessionTranscriptionProvider)?.recordingSessionWillStart()
+        }
         self.audioCapturePipeline.setRecordingEnabled(
             true,
             sessionID: captureSessionID,
@@ -4400,6 +4420,7 @@ final class ASRService: ObservableObject {
             }
         }
         self.stopStreamingScheduler(sessionID: stoppingSessionID)
+        (self.transcriptionProvider as? LiveSessionTranscriptionProvider)?.recordingSessionDidCancel()
         defer {
             self.applyPendingParakeetVocabularyReloadIfNeeded()
             self.isDictionaryTrainingCaptureActive = false

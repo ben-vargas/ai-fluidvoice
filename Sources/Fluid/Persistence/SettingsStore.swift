@@ -5150,6 +5150,10 @@ final class SettingsStore: ObservableObject {
         case whisperLargeTurbo = "whisper-large-turbo"
         case whisperLarge = "whisper-large"
 
+        // MARK: - Cloud (opt-in, never a default)
+
+        case grokSTT = "grok-stt"
+
         var parakeetDescriptor: ParakeetSpeechModelCatalog.Descriptor? {
             ParakeetSpeechModelCatalog.descriptor(forModelID: self.rawValue)
         }
@@ -5183,6 +5187,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return "Whisper Medium"
             case .whisperLargeTurbo: return "Whisper Large Turbo"
             case .whisperLarge: return "Whisper Large"
+            case .grokSTT: return "Grok Speech (xAI)"
             }
         }
 
@@ -5197,6 +5202,7 @@ final class SettingsStore: ObservableObject {
             case .appleSpeechAnalyzer: return "EN, ES, FR, DE, IT, JA, KO, PT, ZH"
             case .whisperTiny, .whisperBase, .whisperSmall, .whisperMedium, .whisperLargeTurbo, .whisperLarge:
                 return "99 Languages"
+            case .grokSTT: return "25 Languages (Select or Auto)"
             }
         }
 
@@ -5217,6 +5223,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return "~793.0 MiB"
             case .whisperLargeTurbo: return "~845.3 MiB"
             case .whisperLarge: return "~1.55 GiB"
+            case .grokSTT: return "Cloud, no download"
             }
         }
 
@@ -5234,7 +5241,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return 831_538_144
             case .whisperLargeTurbo: return 886_381_760
             case .whisperLarge: return 1_668_741_440
-            case .appleSpeech, .appleSpeechAnalyzer: return 0
+            case .appleSpeech, .appleSpeechAnalyzer, .grokSTT: return 0
             }
         }
 
@@ -5248,7 +5255,7 @@ final class SettingsStore: ObservableObject {
         var isWhisperModel: Bool {
             switch self {
             case .parakeetTDT, .parakeetTDTv2, .fluidParakeetMini, .fluidParakeetPico, .parakeetRealtime, .qwen3Asr, .cohereTranscribeSixBit, .nemotronOffline, .nemotronStreaming, .nemotronStreaming320, .appleSpeech,
-                 .appleSpeechAnalyzer: return false
+                 .appleSpeechAnalyzer, .grokSTT: return false
             default: return true
             }
         }
@@ -5378,6 +5385,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return "Medium Quality"
             case .whisperLargeTurbo: return "Higher Quality but Faster"
             case .whisperLarge: return "Maximum Accuracy"
+            case .grokSTT: return "Grok Speech - Cloud"
             }
         }
 
@@ -5414,6 +5422,8 @@ final class SettingsStore: ObservableObject {
                 return "Near-maximum accuracy with optimized speed."
             case .whisperLarge:
                 return "Best possible accuracy. Large download and memory usage."
+            case .grokSTT:
+                return GrokSTTSettingsCopy.cardDescription
             }
         }
 
@@ -5428,8 +5438,8 @@ final class SettingsStore: ObservableObject {
                 return 8.0
             case .nemotronOffline, .nemotronStreaming, .nemotronStreaming320:
                 return 8.0
-            case .appleSpeech, .appleSpeechAnalyzer:
-                return 2.0 // Built-in, minimal overhead
+            case .appleSpeech, .appleSpeechAnalyzer, .grokSTT:
+                return 2.0 // Built-in or cloud, minimal overhead
             case .whisperTiny:
                 return 2.0
             case .whisperBase:
@@ -5478,6 +5488,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return 2
             case .whisperLargeTurbo: return 3
             case .whisperLarge: return 1
+            case .grokSTT: return 4
             }
         }
 
@@ -5498,6 +5509,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return 4
             case .whisperLargeTurbo: return 5
             case .whisperLarge: return 5
+            case .grokSTT: return 4
             }
         }
 
@@ -5518,6 +5530,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return 0.40
             case .whisperLargeTurbo: return 0.65
             case .whisperLarge: return 0.20
+            case .grokSTT: return 0.70
             }
         }
 
@@ -5538,6 +5551,7 @@ final class SettingsStore: ObservableObject {
             case .whisperMedium: return 0.80
             case .whisperLargeTurbo: return 0.95
             case .whisperLarge: return 1.00
+            case .grokSTT: return 0.88
             }
         }
 
@@ -5552,6 +5566,7 @@ final class SettingsStore: ObservableObject {
             case .cohereTranscribeSixBit: return "New"
             case .nemotronOffline, .nemotronStreaming, .nemotronStreaming320: return "New + Beta"
             case .appleSpeechAnalyzer: return "New"
+            case .grokSTT: return GrokSTTSettingsCopy.badge
             default: return nil
             }
         }
@@ -5596,6 +5611,8 @@ final class SettingsStore: ObservableObject {
             switch self {
             case .parakeetRealtime:
                 return 0.2
+            case .grokSTT:
+                return 0.25 // Paces audio sent to the xAI socket; recognition happens server-side.
             case .nemotronStreaming, .nemotronStreaming320:
                 return 0.32
             case .cohereTranscribeSixBit:
@@ -5609,7 +5626,7 @@ final class SettingsStore: ObservableObject {
         /// Cohere performs better with a slightly larger prefix than the default 1 second.
         var minimumStreamingPreviewSeconds: Double {
             switch self {
-            case .parakeetRealtime:
+            case .parakeetRealtime, .grokSTT:
                 return 0.2
             case .nemotronStreaming, .nemotronStreaming320:
                 return 0.64
@@ -5627,6 +5644,7 @@ final class SettingsStore: ObservableObject {
             case openai = "OpenAI"
             case qwen = "Qwen"
             case cohere = "Cohere"
+            case xai = "xAI"
         }
 
         /// Which provider this model belongs to
@@ -5642,6 +5660,8 @@ final class SettingsStore: ObservableObject {
                 return .cohere
             case .whisperTiny, .whisperBase, .whisperSmall, .whisperMedium, .whisperLargeTurbo, .whisperLarge:
                 return .openai
+            case .grokSTT:
+                return .xai
             }
         }
 
@@ -5653,7 +5673,7 @@ final class SettingsStore: ObservableObject {
         /// Whether this model is built-in or already downloaded on disk
         var isInstalled: Bool {
             switch self {
-            case .appleSpeech, .appleSpeechAnalyzer:
+            case .appleSpeech, .appleSpeechAnalyzer, .grokSTT:
                 return true
             case .parakeetTDT, .parakeetTDTv2, .fluidParakeetMini, .fluidParakeetPico:
                 #if canImport(FluidAudio)
@@ -5756,6 +5776,8 @@ final class SettingsStore: ObservableObject {
                 return "Apple"
             case .whisperTiny, .whisperBase, .whisperSmall, .whisperMedium, .whisperLargeTurbo, .whisperLarge:
                 return "OpenAI"
+            case .grokSTT:
+                return "xAI"
             }
         }
 
@@ -5782,7 +5804,14 @@ final class SettingsStore: ObservableObject {
                 return "#A2AAAD" // Apple Gray
             case .whisperTiny, .whisperBase, .whisperSmall, .whisperMedium, .whisperLargeTurbo, .whisperLarge:
                 return "#10A37F" // OpenAI Teal
+            case .grokSTT:
+                return "#000000"
             }
+        }
+
+        /// Sends audio off the Mac. Cloud engines have no local files to download or delete.
+        var isCloudEngine: Bool {
+            self == .grokSTT
         }
     }
 
@@ -6238,6 +6267,8 @@ extension SettingsStore.SpeechModel {
             return "40 language-locales"
         case .appleSpeechAnalyzer:
             return "EN, ES, FR, DE, IT, JA, KO, PT, ZH"
+        case .grokSTT:
+            return GrokSTTLanguage.supportedCodesSummary
         default:
             return nil
         }

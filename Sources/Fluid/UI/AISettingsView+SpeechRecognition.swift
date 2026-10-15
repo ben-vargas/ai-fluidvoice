@@ -171,6 +171,10 @@ extension VoiceEngineSettingsView {
                                 .foregroundStyle(self.voiceEngineSecondaryText)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+
+                        if model == .grokSTT {
+                            GrokSTTCredentialsPanel(settings: self.settings, theme: self.theme)
+                        }
                     }
 
                     HStack(spacing: 8) {
@@ -433,10 +437,10 @@ extension VoiceEngineSettingsView {
                             self.viewModel.activateSpeechModel(model)
                         }
                         .fluidGlassAction(prominent: true)
-                        .disabled(self.viewModel.areSpeechModelActionsBlocked)
+                        .disabled(self.viewModel.areSpeechModelActionsBlocked || !GrokSTTCredentialsPanel.canActivate(model))
                     }
 
-                    if !model.usesAppleLogo {
+                    if !model.usesAppleLogo, !model.isCloudEngine {
                         if isSelected {
                             Button {
                                 self.viewModel.deleteSpeechModel(model)
@@ -545,6 +549,8 @@ extension VoiceEngineSettingsView {
                 .fluidDropdownStyle()
         } else if model == .nemotronOffline || model == .nemotronStreaming || model == .nemotronStreaming320 {
             self.nemotronLanguagePickerButton
+        } else if model == .grokSTT {
+            GrokSTTLanguageMenu(settings: self.settings)
         }
     }
 

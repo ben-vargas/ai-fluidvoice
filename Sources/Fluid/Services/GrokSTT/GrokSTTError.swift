@@ -1,0 +1,212 @@
+import Foundation
+
+/// Server-message associated value that cannot retain a raw credential-bearing string.
+/// The only initializer sanitizes; there is no raw stored-text path.
+nonisolated struct GrokSTTSanitizedMessage: Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible, ExpressibleByStringLiteral {
+    let value: String
+
+    init(_ raw: String) {
+        self.value = GrokSTTError.sanitizedMessage(raw)
+    }
+
+    init(stringLiteral value: String) {
+        self.init(value)
+    }
+
+    var description: String { self.value }
+
+    var debugDescription: String { self.value }
+}
+
+/// Typed STT failures. Payloads never include Bearer tokens, `key`, cookies, or `auth.json` excerpts.
+/// `asNSError().userInfo` contains only `NSLocalizedDescriptionKey` so `ASRService.stop` logging is safe.
+nonisolated enum GrokSTTError: Error, LocalizedError, CustomStringConvertible, CustomDebugStringConvertible, Equatable, Sendable {
+    case noCredentialConfigured
+    case grokCLINotFound
+    case grokStoreUnreadable
+    case grokStoreParseFailed
+    case grokSessionExpired
+    case refreshInProgress
+    case unauthorized
+    case forbidden
+    case rateLimited(retryAfter: TimeInterval?)
+    case timeout
+    case offline
+    case server(status: Int, message: GrokSTTSanitizedMessage)
+    case socketClosed(code: Int)
+    case emptyTranscript
+    case cancelled
+    case invalidAudio
+    case fileTooLarge
+    case unsupportedFile
+    case dictionaryTrainingUnsupported
+    case videoUploadForbidden
+
+    var numericCode: Int {
+        switch self {
+        case .noCredentialConfigured: return 1001
+        case .grokCLINotFound: return 1002
+        case .grokStoreUnreadable: return 1003
+        case .grokStoreParseFailed: return 1004
+        case .grokSessionExpired: return 1005
+        case .refreshInProgress: return 1006
+        case .unauthorized: return 1401
+        case .forbidden: return 1403
+        case .rateLimited: return 1429
+        case .timeout: return 1501
+        case .offline: return 1502
+        case .server: return 1500
+        case .socketClosed: return 1503
+        case .emptyTranscript: return 1601
+        case .cancelled: return 1602
+        case .invalidAudio: return 1603
+        case .fileTooLarge: return 1413
+        case .unsupportedFile: return 1604
+        case .dictionaryTrainingUnsupported: return 1605
+        case .videoUploadForbidden: return 1606
+        }
+    }
+
+    var errorDescription: String? {
+        switch self {
+        case .noCredentialConfigured:
+            return "Add an xAI key under AI Providers, or switch Grok Speech to your Grok CLI session in Voice Engine settings."
+        case .grokCLINotFound:
+            return "Open Grok Build once (or set the grok CLI path in Voice Engine settings) so FluidVoice can refresh your session."
+        case .grokStoreUnreadable:
+            return "Couldn't read your Grok CLI session store."
+        case .grokStoreParseFailed:
+            return "Your Grok CLI session store is unreadable."
+        case .grokSessionExpired:
+            return "Grok session expired — open Grok Build once, then Retry."
+        case .refreshInProgress:
+            return "Grok session refresh is still running. Try again in a moment."
+        case .unauthorized:
+            return "xAI rejected the speech-to-text credential (401)."
+        case .forbidden:
+            return "xAI denied this speech-to-text request (403)."
+        case .rateLimited:
+            return "xAI rate-limited speech-to-text. Wait and tap Retry."
+        case .timeout:
+            return "Timed out waiting for Grok speech-to-text."
+        case .offline:
+            return "Couldn't reach xAI. Your recording is kept — Retry sends it again."
+        case let .server(status, message):
+            if message.value.isEmpty {
+                return "Grok speech-to-text failed (HTTP \(status))."
+            }
+            return "Grok speech-to-text failed (HTTP \(status)). \(message.value)"
+        case let .socketClosed(code):
+            return "The Grok speech connection closed unexpectedly (\(code))."
+        case .emptyTranscript:
+            return "Grok returned no transcript."
+        case .cancelled:
+            return "Speech-to-text was cancelled."
+        case .invalidAudio:
+            return "That audio couldn't be transcribed."
+        case .fileTooLarge:
+            return "That file is too large for Grok speech-to-text (500 MB limit)."
+        case .unsupportedFile:
+            return "That file type isn't supported for Grok speech-to-text."
+        case .dictionaryTrainingUnsupported:
+            return "Dictionary voice training stays on this Mac. Switch to a local voice engine to train pronunciations."
+        case .videoUploadForbidden:
+            return "Video files aren't uploaded to xAI. Extracted audio can be sent after you confirm."
+        }
+    }
+
+    var description: String {
+        self.errorDescription ?? "Speech-to-text failed."
+    }
+
+    var debugDescription: String {
+        switch self {
+        case let .server(status, _):
+            return "GrokSTTError.server(status: \(status), message: [redacted])"
+        case let .rateLimited(retryAfter):
+            return "GrokSTTError.rateLimited(retryAfter: \(String(describing: retryAfter)))"
+        case let .socketClosed(code):
+            return "GrokSTTError.socketClosed(code: \(code))"
+        default:
+            return "GrokSTTError(\(self.description))"
+        }
+    }
+
+    /// Bridge for ASRService NSError logging. `userInfo` contains ONLY `NSLocalizedDescriptionKey`.
+    func asNSError() -> NSError {
+        NSError(
+            domain: Self.nsErrorDomain,
+            code: self.numericCode,
+            userInfo: [NSLocalizedDescriptionKey: self.description]
+        )
+    }
+
+    static let nsErrorDomain = "GrokSTT"
+
+    /// Map HTTP status to a typed error. 403 is never retried by callers.
+    static func fromHTTPStatus(
+        _ status: Int,
+        message: String = "",
+        retryAfter: TimeInterval? = nil
+    ) -> GrokSTTError {
+        switch status {
+        case 400:
+            return .invalidAudio
+        case 401:
+            return .unauthorized
+        case 403:
+            return .forbidden
+        case 413:
+            return .fileTooLarge
+        case 429:
+            return .rateLimited(retryAfter: retryAfter)
+        default:
+            return .server(status: status, message: GrokSTTSanitizedMessage(message))
+        }
+    }
+
+    static func sanitizedMessage(_ message: String) -> String {
+        if Self.looksLikeAuthJSONExcerpt(message) {
+            return "[redacted]"
+        }
+        var result = message
+        for pattern in Self.redactionPatterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            let range = NSRange(result.startIndex..., in: result)
+            result = regex.stringByReplacingMatches(in: result, options: [], range: range, withTemplate: "[redacted]")
+        }
+        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count > 180 {
+            return String(trimmed.prefix(180))
+        }
+        return trimmed
+    }
+
+    private static func looksLikeAuthJSONExcerpt(_ message: String) -> Bool {
+        let lower = message.lowercased()
+        if lower.contains("oidc_issuer") || lower.contains("oidc_client_id") || lower.contains("refresh_token") {
+            return true
+        }
+        return lower.contains("\"key\"") && (lower.contains("expires_at") || lower.contains("::"))
+    }
+
+    private static let redactionPatterns = [
+        #"(?i)bearer\s+\S+"#,
+        #"(?i)authorization:\s*\S+"#,
+        #"(?i)(?:set-)?cookie:\s*[^\n]+"#,
+        #"\bxai-[A-Za-z0-9_-]{8,}\b"#,
+        #"(?i)refresh_token"#,
+        #"(?i)[\"']key[\"']\s*:\s*[\"'][^\"']*[\"']"#,
+        #"(?i)\bkey\s*=\s*\S+"#,
+        #"[A-Za-z0-9_-]{40,}"#,
+    ]
+}
+
+extension Error {
+    func asGrokSTTError() -> GrokSTTError {
+        if let grokError = self as? GrokSTTError {
+            return grokError
+        }
+        return .server(status: 500, message: GrokSTTSanitizedMessage(self.localizedDescription))
+    }
+}
