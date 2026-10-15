@@ -167,7 +167,7 @@ final class SpeechModelInstallationSnapshot: ObservableObject {
                 kind = .whisper(file: file, expectedBytes: model.expectedDownloadBytes)
             } else {
                 switch model {
-                case .appleSpeech, .appleSpeechAnalyzer:
+                case .appleSpeech, .appleSpeechAnalyzer, .grokSTT:
                     kind = .builtIn
                 case .parakeetRealtime:
                     #if canImport(FluidAudio)

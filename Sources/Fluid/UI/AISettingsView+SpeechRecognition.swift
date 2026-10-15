@@ -172,6 +172,10 @@ extension VoiceEngineSettingsView {
                                 // A fixed vertical size here can push the page above the toolbar.
                                 .lineLimit(2)
                         }
+
+                        if model == .grokSTT {
+                            GrokSTTCredentialsPanel(settings: self.settings, theme: self.theme)
+                        }
                     }
 
                     HStack(spacing: 8) {
@@ -442,10 +446,10 @@ extension VoiceEngineSettingsView {
                             self.viewModel.activateSpeechModel(model)
                         }
                         .fluidGlassAction(prominent: true)
-                        .disabled(self.viewModel.areSpeechModelActionsBlocked)
+                        .disabled(self.viewModel.areSpeechModelActionsBlocked || !GrokSTTCredentialsPanel.canActivate(model))
                     }
 
-                    if !model.usesAppleLogo {
+                    if !model.usesAppleLogo, !model.isCloudEngine {
                         if isSelected {
                             Button {
                                 self.viewModel.deleteSpeechModel(model)
@@ -556,6 +560,8 @@ extension VoiceEngineSettingsView {
             self.nemotronLanguagePickerButton
         } else if model == .appleSpeechAnalyzer {
             self.appleSpeechLocalePickerButton
+        } else if model == .grokSTT {
+            GrokSTTLanguageMenu(settings: self.settings)
         }
     }
 
