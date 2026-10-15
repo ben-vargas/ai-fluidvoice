@@ -41,8 +41,12 @@ Everything else lives in new files under `Sources/Fluid/Services/GrokSTT/`,
 
 On a rebase conflict, re-apply these hooks by hand. They are small and mechanical.
 
-`LiveSessionTranscriptionProvider` is engine-agnostic. It is the seam to offer upstream later so that
-any cloud streaming engine can plug in without touching ASRService again.
+`LiveSessionTranscriptionProvider` is engine-agnostic, so another cloud streaming engine could plug in
+without touching ASRService again.
+
+This work stays on Ben's fork. Upstream FluidVoice is local-models only and does not take cloud engines,
+so none of it is proposed upstream. Never commit a personal `DEVELOPMENT_TEAM`: build signed with
+`./build.sh` (or `FLUIDVOICE_DEVELOPMENT_TEAM=... ./build.sh`), which leaves the project file unchanged.
 
 ## Deferred work
 
