@@ -10,7 +10,7 @@ For everything that isn't covered here (features, settings, local models, buildi
 
 | | Upstream FluidVoice | FluidVoice Plus |
 | --- | --- | --- |
-| Speech engines | On-device only (Parakeet, Nemotron, Cohere, Apple Speech, Whisper) | All of those, plus **Grok Speech (xAI)** as an opt-in cloud engine |
+| Speech engines | On-device only (Parakeet, Nemotron, Cohere, Qwen3, Apple Speech, Whisper) | All of those, plus **Grok Speech (xAI)** as an opt-in cloud engine |
 | Where audio goes | Stays on your Mac | Stays on your Mac, unless you select Grok Speech. Then dictation, file, meeting and local-API audio is sent to xAI. |
 | App name and bundle ID | FluidVoice, `com.FluidApp.app` | FluidVoice Plus, `com.FluidApp.app.plus`. It installs next to the official app, with its own settings and permissions. |
 | Analytics | PostHog key included | PostHog key removed from the build, so no usage analytics are sent |
@@ -36,6 +36,8 @@ scripts/build-plus.sh
 ```
 
 The script builds the Release configuration, signs it with the first Apple Development identity in your keychain, and installs `/Applications/FluidVoice Plus.app`. Your team ID is read from the certificate and passed only on the `xcodebuild` command line, so it never ends up in the project file or in git. If the keychain holds several teams, set `FLUIDVOICE_DEVELOPMENT_TEAM`. Quit FluidVoice Plus before rebuilding.
+
+The app includes a Metal shader, so Xcode needs its Metal Toolchain component. Install it once with `xcodebuild -downloadComponent MetalToolchain`.
 
 For a Debug build with full diagnostic logging, use the upstream `./build.sh`. It produces a separate "FluidVoice Debug" app.
 

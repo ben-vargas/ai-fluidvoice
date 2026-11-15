@@ -5,6 +5,9 @@ replaces the old `feat/grok-streaming-stt` branch, which had drifted 300+ commit
 The goal is to keep the old feature set while touching as little upstream code as possible, so
 that future rebases stay cheap.
 
+The branch has since been rebased onto upstream 1.6.13. That release added Fluid Parakeet Pro,
+Qwen3 ASR 1.7B and a meeting overhaul; the hooks below carried over unchanged.
+
 ## How it fits
 
 Grok is one more `SettingsStore.SpeechModel` case (`.grokSTT`). `GrokSTTProvider` is an ordinary
@@ -75,6 +78,9 @@ To add Grok captions:
 
 - Send a retried dictation back through ContentView's normal completion (AI cleanup, history, Edit and Command routing). This needs a small upstream hook in ContentView. Until then, a retry only offers the text for copying.
 - Move the Grok meeting backend to the canonical-evidence contract (word timings, receipts) once Grok returns word timestamps.
+- Offer Grok's languages when a finished meeting is transcribed again. Upstream's
+  `MeetingRetranscriptionLanguage` lists Parakeet's languages only, so with Grok selected a redo can
+  only pick a language both engines share.
 - Add Grok to `VoiceEngineLanguageCatalog` and onboarding. Onboarding still never suggests a cloud
   engine, on purpose.
 - Add `grokSTTAuthMode`, `grokCLIBinaryPath` and `selectedGrokSTTLanguageCode` to settings backup.
@@ -89,3 +95,7 @@ The test files live in `Tests/FluidDictationIntegrationTests/GrokSTT*Tests.swift
   transcript assembler, and WebSocket session.
 - New: dictation controller (frame accounting, backpressure, handoff, REST fallback, generations,
   cancellation) and language/settings.
+
+Upstream's tests run inside the FluidVoice Debug app and read its saved settings. Two
+`MeetingTranscriptionBackendTests` cases expect the local meeting backend, so they fail while Grok is
+the selected engine in FluidVoice Debug. Select a local engine there before running the suite.
