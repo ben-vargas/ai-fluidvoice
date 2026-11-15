@@ -36,6 +36,7 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
     private var handoffSamples: [Float] = []
     private var outbound: [OutboundItem] = []
     private var onPartialHandler: (@MainActor (String) -> Void)?
+    private var onUtteranceEventHandler: (@Sendable (Double, String, Bool) -> Void)?
     private var connection: (any GrokSTTWebSocketConnection)?
     private var receiveTask: Task<Void, Never>?
     private var connectStartedAt: Date?
@@ -77,6 +78,13 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
     var onPartial: (@MainActor (String) -> Void)? {
         get { self.lock.withLock { self.onPartialHandler } }
         set { self.lock.withLock { self.onPartialHandler = newValue } }
+    }
+
+    /// Meeting captions read each `transcript.partial` as it arrives, in order, on the receive
+    /// task. Dictation uses the assembled `onPartial` snapshot instead.
+    var onUtteranceEvent: (@Sendable (_ start: Double, _ text: String, _ isUtteranceFinal: Bool) -> Void)? {
+        get { self.lock.withLock { self.onUtteranceEventHandler } }
+        set { self.lock.withLock { self.onUtteranceEventHandler = newValue } }
     }
 
     var queuedAudioFrameCount: Int {
@@ -490,6 +498,7 @@ final nonisolated class GrokSTTWebSocketSession: NSObject, StreamingTranscriptio
         if !text.isEmpty {
             GrokSTTLog.debug("partial start=\(start) utteranceFinal=\(isUtteranceFinal) text=\(GrokSTTLog.truncatedTranscript(text))")
         }
+        self.onUtteranceEvent?(start, text, isUtteranceFinal)
         let handler = self.onPartial
         guard !snapshot.isEmpty, let handler else { return }
         Task { @MainActor in

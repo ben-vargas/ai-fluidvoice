@@ -84,7 +84,7 @@ final nonisolated class MeetingLiveTranscriptionCoordinator: @unchecked Sendable
     }
 
     func start(mode: MeetingCaptureMode, languageCode: String = "en") {
-        guard languageCode == "en" else {
+        guard languageCode == "en" || GrokMeetingCaptions.areSelected(languageCode: languageCode) else {
             self.publish { $0.settingAvailability(.unavailable(reason: "Live captions support English only. Your transcript will be generated after recording.")) }
             return
         }
@@ -100,12 +100,12 @@ final nonisolated class MeetingLiveTranscriptionCoordinator: @unchecked Sendable
         self.diag(
             "[live] starting engines mode=\(mode) physicalMemory=\(ProcessInfo.processInfo.physicalMemory / 1_073_741_824)GB"
         )
-        let microphone = MeetingLiveTrackEngine(kind: .microphone)
+        let microphone = MeetingLiveTrackEngine(kind: .microphone, recognizer: GrokMeetingCaptions.recognizer(languageCode: languageCode))
         self.stateLock.withLock { self.microphoneEngine = microphone }
         self.launch(microphone)
 
         if mode.capturesComputerAudio {
-            let application = MeetingLiveTrackEngine(kind: .applicationAudio)
+            let application = MeetingLiveTrackEngine(kind: .applicationAudio, recognizer: GrokMeetingCaptions.recognizer(languageCode: languageCode))
             self.stateLock.withLock { self.applicationEngine = application }
             self.launch(application)
         }

@@ -22,6 +22,7 @@ AI cleanup styles and prompts, history, and typing into the focused field.
 | Dictation failure | `GrokSTTRetryCenter` keeps the audio in memory for 15 minutes and shows a Retry / Dismiss panel. A retry re-uploads over REST and applies local cleanup. If the failed recording was an ordinary dictation, the text then goes through ContentView's `reprocessDictationText`, the path behind upstream's "reprocess last dictation": AI cleanup for the primary shortcut, then history. It is typed only into the field that had focus when Retry was clicked, and only if that field still has focus when cleanup ends. If focus moved, the text stays in history and is offered with a Copy button. If a new recording started, the delivery stops without touching that recording. ContentView reports what each empty result was (`noteEmptyResult`); an Edit, Command, prompt-test, cancelled or onboarding capture is never typed, only offered for copying. Dismissing, or starting a new recording, cancels a retry in flight. |
 | Files | `prefersNativeFileTranscription` sends WAV, MP3, M4A, AAC, FLAC, OGG and Opus files to REST as-is. Other formats are decoded to 16 kHz mono and uploaded as WAV, in requests of up to 20 minutes. The local API uses the same paths. |
 | Meetings | Upstream's default meeting backend always uses local Parakeet. While Grok is selected and the meeting's language is one Grok accepts, `MeetingProcessingPipeline` picks `GrokMeetingTranscriptionBackend` (`hosted-grok-stt-legacy-v1`). A meeting in any other language stays with upstream's local backend (`GrokMeetingTranscriptionBackend.handles`), so it is transcribed on the Mac and its audio is not uploaded; this covers new meetings, retries and Redo transcript alike. That backend runs the same in-pipeline workflow as the legacy backend, which transcribes with the selected engine, but it declares Grok's languages instead of English only. Meeting chunks are CAF, so they go through the decode-to-WAV path. `MeetingProviderLanguagePin` pins Grok to the meeting's language for the run. Speaker labels still come from the local diarizer. |
+| Meeting live captions | While Grok is selected and accepts the meeting's language, each audio track gets a `GrokMeetingLiveRecognizer` instead of the local caption model: one streaming socket for the microphone and one for the other participants. `MeetingLiveTrackEngine` already takes an injected recognizer, so the engine, its timing and the caption UI are upstream's. Socket text is handed to the engine only inside `processBufferedAudio`, one finished utterance at a time, which is the contract the local model keeps. A lost socket closes the caption on screen with the text that arrived, buffers up to 10 seconds of audio and reconnects; a second failure shows upstream's "captions hit an error" state once, and a sign-in problem stops captions for that meeting. The socket closes 5 seconds after audio stops. Captions stream the whole meeting to xAI on top of the final transcript's upload, so a Grok meeting sends its audio twice. Every other meeting keeps the local captions. |
 | Credentials | API key mode reuses the xAI key saved under AI Providers. Grok CLI session mode reads `~/.grok/auth.json` read-only and refreshes it by running `grok`. Until the user picks a mode, Grok uses the xAI key if one is saved, otherwise a Grok CLI session if one is on disk. `prepare` saves that choice, so adding a key later never moves a CLI user onto API billing. `prepare` only checks that the selected sign-in exists. Resolving and refreshing happen per request, so a failure keeps the recording for Retry. Errors never switch modes. The sign-in options open under the Grok row, and the list scrolls to them. |
 | Dictionary training | Not supported. It throws a clear error that tells the user to pick a local engine. |
 
@@ -38,6 +39,7 @@ Everything else lives in new files under `Sources/Fluid/Services/GrokSTT/`,
 - `ContentView.swift`: three hooks. `initializeHotkeyManagerIfNeeded` installs `GrokSTTRetryCenter.deliverRecoveredDictation`; the empty-result branch of `processStoppedTranscription` calls `noteEmptyResult`; and `reprocessDictationText` takes an optional `GrokSTTRecoveredDelivery`. It asks the delivery before typing, passes `allowsOutput` as `isOutputValid` to upstream's focus-restore and paste steps, reports `didType` when the paste command is out (so upstream's later clipboard settlement still sees a valid output), and checks `isSuperseded` before tearing the overlay down. Without a delivery it behaves as upstream wrote it.
 - `BackupService.swift` and `SettingsStore.swift`: the optional `grokSTT` backup field, written in `makeBackupPayload` and read in `restore`. It holds the sign-in mode, the CLI path and the language, never a key or token.
 - `Meeting/MeetingProcessingPipeline.swift`: asks `GrokMeetingTranscriptionBackend.handles(languageCode:)` whether Grok takes the meeting, and `MeetingProviderLanguagePin` gets a `.grok` case.
+- `Meeting/LiveTranscription/MeetingLiveTranscriptionCoordinator.swift`: three edits in `start`. The English-only guard also lets a Grok-captioned language through, and both engines are created with `GrokMeetingCaptions.recognizer(languageCode:)`, which is `nil` (the local model) unless Grok takes the meeting.
 - `Meeting/Backend/MeetingTranscriptionBackendRegistry.swift`: registers the Grok backend (one line). `MeetingTranscriptionBackendTests` expects it in the default registry.
 - `AISettingsView.swift`, `VoiceEngineSettingsViewModel.swift`, `AISettingsView+SpeechRecognition.swift`:
   the xAI filter chip, the credentials panel, the language menu, gating of the Activate button, and
@@ -54,27 +56,6 @@ so none of it is proposed upstream. Never commit a personal `DEVELOPMENT_TEAM`: 
 `./build.sh` (or `FLUIDVOICE_DEVELOPMENT_TEAM=... ./build.sh`), which leaves the project file unchanged.
 
 ## Deferred work
-
-### Meeting live captions (Ben asked for this to be tracked)
-
-Meetings get the final Grok transcript today. Live captions still come from the local Parakeet EOU
-engine, so they need a downloaded local model.
-
-To add Grok captions:
-
-1. Write `GrokMeetingLiveRecognizer: MeetingLiveRecognizer`
-   (`Services/Meeting/LiveTranscription/MeetingLiveTrackEngine.swift`). Each call maps to the socket:
-   - `prepareModels` resolves the credential.
-   - `appendAudio` resamples to 16 kHz mono PCM16 and sends it with `GrokSTTWebSocketSession.append`.
-   - `processBufferedAudio` is a no-op.
-   - `reset` finishes the current socket and opens a new one.
-   - Partial callbacks come from the session's `onPartial`.
-   - EOU callbacks fire on `transcript.done`, or on a silence-endpoint segment boundary.
-2. Inject it where `MeetingLiveTranscriptionCoordinator` builds `MeetingLiveTrackEngine(kind:)`, when
-   `selectedSpeechModel == .grokSTT`. Microphone and application audio need one socket each.
-3. Decide on reconnects for long meetings. xAI closes idle sockets, and there is a per-session duration
-   cap. Rotate the socket on each EOU or every N minutes.
-4. Label meeting captions as cloud processed in the meeting UI.
 
 ### Other follow-ups
 

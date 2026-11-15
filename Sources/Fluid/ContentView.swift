@@ -4508,7 +4508,8 @@ struct ContentView: View {
             bundleID: appInfo.bundleId,
             windowTitle: appInfo.windowTitle
         )
-        self.recordingPrecedingText = ""
+        // A newer recording has saved its own context here by now.
+        if !delivery.isSuperseded { self.recordingPrecedingText = "" }
         let outputPlan = ASRService.makeDictationLiteralOutputPlan(
             for: finalText,
             appName: appInfo.name,
