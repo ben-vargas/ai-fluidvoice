@@ -4429,7 +4429,7 @@ struct ContentView: View {
 
     private func reprocessDictationText(
         _ transcribedText: String,
-        delivery: GrokSTTRetryCenter.DeliveryCheck = { _ in .type }
+        delivery: @escaping GrokSTTRetryCenter.DeliveryCheck = { _ in .type }
     ) async {
         // If live recording is still active, stop it first so reprocess does not
         // leave ASR running in the background (which causes the next hotkey press
@@ -4538,6 +4538,7 @@ struct ContentView: View {
 
         let deliveryDecision = delivery(finalText)
         if deliveryDecision == .abandon { return }
+        let isOutputValid: @MainActor () -> Bool = { delivery(finalText) == .type }
 
         let targetContext = TypingService.captureRecordingTargetContext()
         NotchContentState.shared.recordingTargetContext = targetContext
@@ -4549,7 +4550,9 @@ struct ContentView: View {
         if shouldTypeExternally {
             let typingTarget = self.resolveTypingTargetPID()
             if typingTarget.shouldRestoreOriginalFocus {
-                guard await self.prepareRecordingTargetForDelivery(finalText, keepBackup: SettingsStore.shared.copyTranscriptionToClipboard) else {
+                let keepBackup = SettingsStore.shared.copyTranscriptionToClipboard
+                // A delivery that stopped being valid is not a failed restore; typing below declines it.
+                guard await self.prepareRecordingTargetForDelivery(finalText, keepBackup: keepBackup, isOutputValid: isOutputValid) || !isOutputValid() else {
                     self.showTextDeliveryFailure(.targetRestoreFailed, transcript: finalText)
                     return
                 }
@@ -4557,7 +4560,8 @@ struct ContentView: View {
             let result = await self.asr.typeOutputPlanToActiveField(
                 outputPlan,
                 preferredTargetPID: typingTarget.pid,
-                preserveTranscriptOnClipboard: SettingsStore.shared.copyTranscriptionToClipboard
+                preserveTranscriptOnClipboard: SettingsStore.shared.copyTranscriptionToClipboard,
+                isOutputValid: isOutputValid
             )
             if case let .recoverableFailure(failure) = result {
                 self.showTextDeliveryFailure(failure, transcript: finalText)
@@ -4566,6 +4570,7 @@ struct ContentView: View {
         } else {
             await PasteDeliveryCoordinator.shared.copyBackup(finalText, enabled: SettingsStore.shared.copyTranscriptionToClipboard)
         }
+        if delivery(finalText) == .abandon { return }
 
         NotchOverlayManager.shared.updateTranscriptionText("")
         if shouldShowAIProcessingFailure {
@@ -5155,6 +5160,8 @@ struct ContentView: View {
             self.reprocessLastDictation()
         }
         GrokSTTRetryCenter.shared.deliverRecoveredDictation = { text, check in
+            // Reprocess stops a running capture, so it must never start under one.
+            guard !self.asr.isRunningOrStarting else { return GrokSTTRetryCenter.shared.offerForCopy(text) }
             let lifecycle = self.overlayLifecycleID
             await self.reprocessDictationText(text) { finalText in
                 // A newer recording owns the overlay; Escape cleared the mode this reprocess set.

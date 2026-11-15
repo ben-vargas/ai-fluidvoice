@@ -296,21 +296,32 @@ final class GrokSTTRetryCenterTests: XCTestCase {
     private let samples = [Float](repeating: 0.1, count: 1600)
     private let field = TypingService.CapturedFocusTarget(pid: 1, window: nil, element: AXUIElementCreateSystemWide())
 
-    /// What ContentView's reprocess path does with a recovered dictation, reduced to the two
-    /// things the retry center controls: the text it hands over and the decision it returns.
+    /// What ContentView's reprocess path does with a recovered dictation, reduced to what the
+    /// retry center controls: the text it hands over and the answers it gives. Reprocess asks
+    /// three times: before typing, as the validity check while pasting, and before teardown.
     @MainActor
     private final class Reprocess {
         var texts: [String] = []
         var decisions: [GrokSTTRetryCenter.DeliveryDecision] = []
         /// Runs between "cleanup finished" and "about to type".
         var beforeTyping: () -> Void = {}
+        /// Runs while the paste is waiting on Accessibility or the clipboard.
+        var whilePasting: () -> Void = {}
+        /// Runs after the paste, before the overlay is torn down.
+        var beforeTeardown: () -> Void = {}
 
         func install(on center: GrokSTTRetryCenter) {
             center.deliverRecoveredDictation = { text, check in
                 self.texts.append(text)
+                let final = text + " (cleaned)"
                 await Task.yield()
                 self.beforeTyping()
-                self.decisions.append(check(text + " (cleaned)"))
+                self.decisions.append(check(final))
+                await Task.yield()
+                self.whilePasting()
+                self.decisions.append(check(final))
+                self.beforeTeardown()
+                self.decisions.append(check(final))
             }
         }
     }
@@ -349,7 +360,7 @@ final class GrokSTTRetryCenterTests: XCTestCase {
         await self.retryAndSettle(center)
 
         XCTAssertEqual(reprocess.texts.map { $0.lowercased() }, ["hello world"])
-        XCTAssertEqual(reprocess.decisions, [.type])
+        XCTAssertEqual(reprocess.decisions, [.type, .type, .type], "Asking does not use the delivery up")
         XCTAssertNil(center.pending)
         XCTAssertNil(center.recoveredTextForCopy)
         XCTAssertFalse(center.isRetrying)
@@ -401,8 +412,40 @@ final class GrokSTTRetryCenterTests: XCTestCase {
         self.failOrdinaryDictation(on: center)
         await self.retryAndSettle(center)
 
-        XCTAssertEqual(reprocess.decisions, [.keepWithoutTyping])
+        XCTAssertEqual(reprocess.decisions, [.keepWithoutTyping, .keepWithoutTyping, .keepWithoutTyping])
         XCTAssertEqual(center.recoveredTextForCopy?.lowercased(), "hello world (cleaned)")
+    }
+
+    func testAPasteInProgressIsDeclinedWhenTheFieldLosesFocusAndStaysDeclined() async {
+        var focused = true
+        let reprocess = Reprocess()
+        reprocess.whilePasting = { focused = false }
+        // Focus coming back must not revive a delivery whose text is already offered for copying.
+        reprocess.beforeTeardown = { focused = true }
+        let center = self.makeCenter(stillFocused: { focused })
+        reprocess.install(on: center)
+
+        self.failOrdinaryDictation(on: center)
+        await self.retryAndSettle(center)
+
+        XCTAssertEqual(reprocess.decisions, [.type, .keepWithoutTyping, .keepWithoutTyping])
+        XCTAssertEqual(center.recoveredTextForCopy?.lowercased(), "hello world (cleaned)")
+    }
+
+    func testDismissingTheCopyOfferDoesNotAbandonTheOverlayTeardown() async {
+        var focused = true
+        let reprocess = Reprocess()
+        let center = self.makeCenter(stillFocused: { focused })
+        reprocess.beforeTyping = { focused = false }
+        // The user dismisses the Copy panel while reprocess is still finishing.
+        reprocess.whilePasting = { center.clear() }
+        reprocess.install(on: center)
+
+        self.failOrdinaryDictation(on: center)
+        await self.retryAndSettle(center)
+
+        XCTAssertEqual(reprocess.decisions, [.keepWithoutTyping, .keepWithoutTyping, .keepWithoutTyping])
+        XCTAssertNil(center.recoveredTextForCopy)
     }
 
     func testTextIsNotTypedWhenNoFieldWasFocusedAtTheRetryClick() async {
@@ -413,21 +456,50 @@ final class GrokSTTRetryCenterTests: XCTestCase {
         self.failOrdinaryDictation(on: center)
         await self.retryAndSettle(center)
 
-        XCTAssertEqual(reprocess.decisions, [.keepWithoutTyping])
+        XCTAssertEqual(reprocess.decisions, [.keepWithoutTyping, .keepWithoutTyping, .keepWithoutTyping])
     }
 
     func testANewRecordingDuringCleanupAbandonsTheDelivery() async {
         let reprocess = Reprocess()
         let center = self.makeCenter()
-        // GrokSTTProvider.recordingSessionWillStart clears the center for every new dictation.
-        reprocess.beforeTyping = { center.clear() }
+        // ASRService.start calls this for every capture, on any engine.
+        reprocess.beforeTyping = { center.recordingWillStart() }
         reprocess.install(on: center)
 
         self.failOrdinaryDictation(on: center)
         await self.retryAndSettle(center)
 
-        XCTAssertEqual(reprocess.decisions, [.abandon])
+        XCTAssertEqual(reprocess.decisions, [.abandon, .abandon, .abandon])
         XCTAssertNil(center.recoveredTextForCopy)
+    }
+
+    func testANewRecordingWhilePastingAbandonsTheRest() async {
+        let reprocess = Reprocess()
+        let center = self.makeCenter()
+        reprocess.whilePasting = { center.recordingWillStart() }
+        reprocess.install(on: center)
+
+        self.failOrdinaryDictation(on: center)
+        await self.retryAndSettle(center)
+
+        XCTAssertEqual(reprocess.decisions, [.type, .abandon, .abandon])
+    }
+
+    func testARecordingThatStartsAsTheUploadFinishesKeepsReprocessFromStarting() async {
+        let reprocess = Reprocess()
+        var center: GrokSTTRetryCenter?
+        // The capture starts in the same main-actor turn the upload returns in.
+        center = self.makeCenter(transcribe: { _, _ in
+            Task { @MainActor in center?.recordingWillStart() }
+            return "too late"
+        })
+        guard let center else { return XCTFail("No center") }
+        reprocess.install(on: center)
+
+        self.failOrdinaryDictation(on: center)
+        await self.retryAndSettle(center)
+
+        XCTAssertTrue(reprocess.texts.isEmpty, "Reprocess stops a running capture, so it must not start")
     }
 
     func testANewRecordingDuringTheUploadDiscardsTheRetry() async {
@@ -442,7 +514,7 @@ final class GrokSTTRetryCenterTests: XCTestCase {
         self.failOrdinaryDictation(on: center)
         center.retry()
         let upload = center.retryInFlight
-        center.clear()
+        center.recordingWillStart()
         gate.signal()
         await upload?.value
         for _ in 0..<10 { await Task.yield() }
@@ -466,7 +538,7 @@ final class GrokSTTRetryCenterTests: XCTestCase {
         XCTAssertEqual(center.pending?.isPlainDictation, true, "A failed retry keeps the recording and its mark")
         await self.retryAndSettle(center)
         XCTAssertEqual(reprocess.texts.map { $0.lowercased() }, ["second try"])
-        XCTAssertEqual(reprocess.decisions, [.type])
+        XCTAssertEqual(reprocess.decisions, [.type, .type, .type])
 
         // A later failed recording starts unmarked.
         center.retain(samples: self.samples, error: .timeout, configuration: self.configuration)

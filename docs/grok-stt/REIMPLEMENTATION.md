@@ -31,11 +31,11 @@ Everything else lives in new files under `Sources/Fluid/Services/GrokSTT/`,
 `Sources/Fluid/UI/GrokSTT/` and `Sources/Fluid/Persistence/SettingsStore+GrokSTT.swift`.
 
 - `SettingsStore.swift`: adds the `.grokSTT` case and its switch arms, `Provider.xai`, and `isCloudEngine`.
-- `ASRService.swift`: about 20 lines. It adds the provider cache and factory arms, and two calls into
+- `ASRService.swift`: about 20 lines. It adds the provider cache and factory arms, and two calls into One more line in `start()` tells `GrokSTTRetryCenter` that a recording is starting, on any engine, so an older failure can never type over it.
   the generic `LiveSessionTranscriptionProvider` seam (`recordingSessionWillStart` in `start()`,
   `recordingSessionDidCancel` in `stopWithoutTranscription`).
 - `SpeechModelInstallationSnapshot.swift`: Grok counts as built in.
-- `ContentView.swift`: three hooks. `initializeHotkeyManagerIfNeeded` installs `GrokSTTRetryCenter.deliverRecoveredDictation`; the empty-result branch of `processStoppedTranscription` calls `noteEmptyResult`; and `reprocessDictationText` takes an optional `delivery` check that it asks right before typing (default: always type, so upstream's own callers are unchanged).
+- `ContentView.swift`: three hooks. `initializeHotkeyManagerIfNeeded` installs `GrokSTTRetryCenter.deliverRecoveredDictation`; the empty-result branch of `processStoppedTranscription` calls `noteEmptyResult`; and `reprocessDictationText` takes an optional `delivery` check. It asks the check before typing, passes it as `isOutputValid` to upstream's focus-restore and paste steps, and asks once more before tearing the overlay down. The default always answers "type", so upstream's own caller is unchanged.
 - `BackupService.swift` and `SettingsStore.swift`: the optional `grokSTT` backup field, written in `makeBackupPayload` and read in `restore`. It holds the sign-in mode, the CLI path and the language, never a key or token.
 - `Meeting/MeetingProcessingPipeline.swift`: asks `GrokMeetingTranscriptionBackend.handles(languageCode:)` whether Grok takes the meeting, and `MeetingProviderLanguagePin` gets a `.grok` case.
 - `Meeting/Backend/MeetingTranscriptionBackendRegistry.swift`: registers the Grok backend (one line). `MeetingTranscriptionBackendTests` expects it in the default registry.

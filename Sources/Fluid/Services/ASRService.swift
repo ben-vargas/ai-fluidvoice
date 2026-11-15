@@ -2963,6 +2963,7 @@ final class ASRService: ObservableObject {
         self.benchmarkCompletedStreamingChunks = 0
         self.benchmarkLastChunkSampleCount = 0
         (self.transcriptionProvider as? FluidAudioProvider)?.resetStreamingPreviewCache()
+        GrokSTTRetryCenter.shared.recordingWillStart()
         if !forDictionaryTraining {
             (self.transcriptionProvider as? LiveSessionTranscriptionProvider)?.recordingSessionWillStart()
         }

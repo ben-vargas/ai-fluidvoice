@@ -62,7 +62,6 @@ final class GrokSTTProvider: LiveSessionTranscriptionProvider {
     func recordingSessionWillStart() {
         self.liveGeneration &+= 1
         self.liveRecording = (self.liveGeneration, Self.currentConfiguration())
-        GrokSTTRetryCenter.shared.clear()
     }
 
     func recordingSessionDidCancel() {

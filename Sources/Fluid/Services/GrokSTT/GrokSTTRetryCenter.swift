@@ -35,16 +35,19 @@ final class GrokSTTRetryCenter {
         case abandon
     }
 
+    /// Asked with the final text, and safe to ask repeatedly: before typing, as the validity
+    /// check of every step of typing, and again before the overlay is torn down.
     typealias DeliveryCheck = @MainActor (String) -> DeliveryDecision
 
-    /// Finishes a recovered dictation through ContentView's reprocess path. ContentView installs
-    /// it, and asks the check, with the final text, right before it would type.
+    /// Finishes a recovered dictation through ContentView's reprocess path. ContentView installs it.
     var deliverRecoveredDictation: (@MainActor (String, @escaping DeliveryCheck) async -> Void)?
 
     /// Text currently offered with a Copy button.
     private(set) var recoveredTextForCopy: String?
-    /// The delivery that may still type. Cleared by a new recording or Dismiss.
+    /// The delivery in progress. Only a new recording takes it away.
     private var activeDeliveryID: UUID?
+    /// The active delivery's field lost focus, so its text is offered for copying instead.
+    private var activeDeliveryLostFocus = false
 
     private(set) var pending: Pending?
     private var expiryTask: Task<Void, Never>?
@@ -129,10 +132,16 @@ final class GrokSTTRetryCenter {
         self.pending?.isPlainDictation = true
     }
 
+    /// Every recording, on any engine, takes over from an older failure: its audio, a retry in
+    /// flight, and a delivery that has not finished typing. ASRService calls this as capture starts.
+    func recordingWillStart() {
+        self.activeDeliveryID = nil
+        self.clear()
+    }
+
     /// Drops the kept audio, cancels any retry in flight, and hides the panel.
     func clear() {
         self.invalidateAttempt()
-        self.activeDeliveryID = nil
         self.recoveredTextForCopy = nil
         self.pending = nil
         self.expiryTask?.cancel()
@@ -196,7 +205,10 @@ final class GrokSTTRetryCenter {
         self.clear()
         let delivery = UUID()
         self.activeDeliveryID = delivery
+        self.activeDeliveryLostFocus = false
         Task { @MainActor [weak self] in
+            // A recording may have started since the upload finished.
+            guard self?.activeDeliveryID == delivery else { return }
             await deliver(cleaned) { [weak self] finalText in
                 self?.decideDelivery(delivery, focus: focus, finalText: finalText) ?? .abandon
             }
@@ -204,18 +216,21 @@ final class GrokSTTRetryCenter {
         }
     }
 
-    /// Runs after cleanup, right before typing. A new recording or Dismiss has cleared the
-    /// delivery by then; a moved focus leaves the text in history and offers it for copying.
+    /// The delivery stays `.type` only while it is still the active one and the field from the
+    /// Retry click still has focus. Once that field loses focus the text is offered for copying,
+    /// and the answer stays `.keepWithoutTyping` even if focus comes back.
     private func decideDelivery(_ delivery: UUID, focus: TypingService.CapturedFocusTarget?, finalText: String) -> DeliveryDecision {
         guard self.activeDeliveryID == delivery else { return .abandon }
-        self.activeDeliveryID = nil
+        if self.activeDeliveryLostFocus { return .keepWithoutTyping }
         if let focus, self.isFocusActive(focus) { return .type }
         GrokSTTLog.info("retry_recovered not typed: the field from the Retry click lost focus")
+        self.activeDeliveryLostFocus = true
         self.offerForCopy(finalText)
         return .keepWithoutTyping
     }
 
-    private func offerForCopy(_ text: String) {
+    /// Shows recovered text with a Copy button. Also used when a delivery cannot start.
+    func offerForCopy(_ text: String) {
         self.pending = nil
         self.recoveredTextForCopy = text
         self.scheduleExpiry()
