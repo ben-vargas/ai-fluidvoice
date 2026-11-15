@@ -227,16 +227,36 @@ final class GrokMeetingLiveRecognizerTests: XCTestCase {
         func advance(_ seconds: Double) { self.lock.withLock { self.value += seconds } }
     }
 
+    /// Records the waits between connection attempts instead of sleeping through them.
+    private final class Waits: @unchecked Sendable {
+        private let lock = NSLock()
+        private var seconds: [Double] = []
+        private var cancelsAt: Int?
+        var all: [Double] { self.lock.withLock { self.seconds } }
+        /// The engine cancels its load task when the meeting stops.
+        func cancelOnWait(_ index: Int) { self.lock.withLock { self.cancelsAt = index } }
+
+        func wait(_ seconds: Double) async throws {
+            let cancelled = self.lock.withLock { () -> Bool in
+                self.seconds.append(seconds)
+                return self.cancelsAt == self.seconds.count
+            }
+            if cancelled { throw CancellationError() }
+        }
+    }
+
     private func makeRecognizer(
         _ sockets: Sockets,
         clock: Clock = Clock(),
+        waits: Waits = Waits(),
         callbacks: Callbacks
     ) async -> GrokMeetingLiveRecognizer {
         let recognizer = GrokMeetingLiveRecognizer(
             languageCode: "de",
             socketFactory: { sockets.make($0) },
             keyterms: { ["FluidVoice"] },
-            uptime: { clock.now() }
+            uptime: { clock.now() },
+            sleep: { try await waits.wait($0) }
         )
         await recognizer.setPartialTranscriptCallback { callbacks.partial($0) }
         await recognizer.setEouCallback { callbacks.end($0) }
@@ -446,14 +466,96 @@ final class GrokMeetingLiveRecognizerTests: XCTestCase {
         XCTAssertEqual(sockets.count, 2, "No further sockets once sign-in is known to be missing")
     }
 
-    func testPrepareSurfacesAConnectionFailure() async {
-        let recognizer = await self.makeRecognizer(Sockets([FakeSocket(startError: .unauthorized)]), callbacks: Callbacks())
+    func testPrepareSurfacesAFailureWaitingCannotFixAtOnce() async {
+        let sockets = Sockets([FakeSocket(startError: .noCredentialConfigured)])
+        let waits = Waits()
+        let recognizer = await self.makeRecognizer(sockets, waits: waits, callbacks: Callbacks())
         do {
             try await recognizer.prepareModels()
             XCTFail("Expected the sign-in failure")
         } catch {
-            XCTAssertEqual(error as? GrokSTTError, .unauthorized)
+            XCTAssertEqual(error as? GrokSTTError, .noCredentialConfigured)
         }
+        XCTAssertEqual(sockets.count, 1)
+        XCTAssertTrue(waits.all.isEmpty)
+    }
+
+    func testPrepareRetriesAFirstConnectionThatFailedForNow() async throws {
+        let working = FakeSocket()
+        let sockets = Sockets([FakeSocket(startError: .offline), FakeSocket(startError: .timeout), working])
+        let waits = Waits()
+        let recognizer = await self.makeRecognizer(sockets, waits: waits, callbacks: Callbacks())
+
+        try await recognizer.prepareModels()
+        XCTAssertEqual(sockets.count, 3)
+        XCTAssertEqual(waits.all, Array(GrokMeetingLiveRecognizer.reconnectDelays[1...2]))
+
+        try await recognizer.appendAudio(self.audio(samples: 1600))
+        XCTAssertEqual(working.sentFrames.count, 1)
+    }
+
+    func testPrepareGivesUpAfterItsLastDelay() async {
+        let delays = GrokMeetingLiveRecognizer.reconnectDelays
+        let sockets = Sockets((0..<delays.count + 3).map { _ in FakeSocket(startError: .offline) })
+        let waits = Waits()
+        let recognizer = await self.makeRecognizer(sockets, waits: waits, callbacks: Callbacks())
+        do {
+            try await recognizer.prepareModels()
+            XCTFail("Expected the connection failure")
+        } catch {
+            XCTAssertEqual(error as? GrokSTTError, .offline)
+        }
+        XCTAssertEqual(sockets.count, delays.count)
+        XCTAssertEqual(waits.all, Array(delays.dropFirst()))
+    }
+
+    func testStoppingTheMeetingEndsTheWaitForAFirstConnection() async {
+        let sockets = Sockets([FakeSocket(startError: .offline), FakeSocket()])
+        let waits = Waits()
+        waits.cancelOnWait(1)
+        let recognizer = await self.makeRecognizer(sockets, waits: waits, callbacks: Callbacks())
+        do {
+            try await recognizer.prepareModels()
+            XCTFail("Expected cancellation")
+        } catch {
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertEqual(sockets.count, 1, "No further socket once the load was cancelled")
+    }
+
+    func testTheEngineBecomesReadyAfterAFirstConnectionThatFailedForNow() async {
+        let working = FakeSocket()
+        let sockets = Sockets([FakeSocket(startError: .timeout), working])
+        let recognizer = await self.makeRecognizer(sockets, callbacks: Callbacks())
+        let engine = MeetingLiveTrackEngine(kind: .microphone, recognizer: recognizer)
+        let ready = expectation(description: "captions ready")
+        await engine.configure(
+            onPartial: { _, _, _, _, _ in },
+            onUtterance: { _, _, _, _, _ in },
+            onDegraded: { _, reason in XCTFail("Unexpected degradation: \(reason)") },
+            onReady: { _ in ready.fulfill() }
+        )
+        await engine.start()
+        await fulfillment(of: [ready], timeout: 5)
+        XCTAssertEqual(sockets.count, 2)
+        XCTAssertEqual(working.cancelCount, 0, "The warmup that follows keeps the socket")
+        await engine.stop()
+    }
+
+    func testTheEngineReportsAFirstConnectionThatCannotSucceed() async {
+        let sockets = Sockets([FakeSocket(startError: .unauthorized)] + (0..<8).map { _ in FakeSocket(startError: .noCredentialConfigured) })
+        let recognizer = await self.makeRecognizer(sockets, callbacks: Callbacks())
+        let engine = MeetingLiveTrackEngine(kind: .microphone, recognizer: recognizer)
+        let failed = expectation(description: "captions could not load")
+        await engine.configure(
+            onPartial: { _, _, _, _, _ in },
+            onUtterance: { _, _, _, _, _ in },
+            onDegraded: { _, reason in if reason.hasPrefix("Live captions could not load") { failed.fulfill() } },
+            onReady: { _ in XCTFail("Captions must not be shown as ready") }
+        )
+        await engine.start()
+        await fulfillment(of: [failed], timeout: 5)
+        await engine.stop()
     }
 
     func testTheSocketClosesOnceAudioStops() async throws {

@@ -77,6 +77,7 @@ actor GrokMeetingLiveRecognizer: MeetingLiveRecognizer {
     private let socketFactory: SocketFactory
     private let keyterms: KeytermProvider
     private let uptime: @Sendable () -> Double
+    private let sleep: @Sendable (Double) async throws -> Void
 
     private var eouCallback: (@Sendable (String) -> Void)?
     private var partialCallback: (@Sendable (String) -> Void)?
@@ -107,12 +108,14 @@ actor GrokMeetingLiveRecognizer: MeetingLiveRecognizer {
         languageCode: String?,
         socketFactory: @escaping SocketFactory = { GrokSTTWebSocketSession(configuration: $0, resolver: GrokSTTCredentialResolver.shared) },
         keyterms: @escaping KeytermProvider = { await GrokSTTKeytermBuilder.terms() },
-        uptime: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime }
+        uptime: @escaping @Sendable () -> Double = { ProcessInfo.processInfo.systemUptime },
+        sleep: @escaping @Sendable (Double) async throws -> Void = { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) }
     ) {
         self.languageCode = languageCode
         self.socketFactory = socketFactory
         self.keyterms = keyterms
         self.uptime = uptime
+        self.sleep = sleep
     }
 
     deinit {
@@ -127,9 +130,31 @@ actor GrokMeetingLiveRecognizer: MeetingLiveRecognizer {
 
     /// There is no model to load. Connecting here makes a missing or rejected sign-in show up as
     /// "Live captions could not load" before the meeting relies on them.
+    ///
+    /// The engine never feeds a recognizer whose load failed, so nothing later could reconnect it.
+    /// A failure that waiting can fix is therefore retried here, on the same schedule as a
+    /// reconnect, and the engine cancelling its load (the meeting stopped) ends the wait.
     func prepareModels() async throws {
-        guard self.socket == nil else { return }
-        try await self.openSocket()
+        var failures = 0
+        while self.socket == nil {
+            try Task.checkCancellation()
+            do {
+                try await self.openSocket()
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                let failure = GrokSTTTransportErrorMapper.map(error)
+                failures += 1
+                guard failure.isRetryable, failures < Self.reconnectDelays.count else { throw failure }
+                GrokSTTLog.info("meeting_captions connect failed attempt=\(failures) error=\(String(describing: failure))")
+                try await self.sleep(Self.reconnectDelays[failures])
+            }
+        }
+        if Task.isCancelled {
+            // Stopped while the socket was opening: nothing will feed or close it.
+            self.dropSocket()
+            throw CancellationError()
+        }
     }
 
     func appendAudio(_ buffer: AVAudioPCMBuffer) async throws {
