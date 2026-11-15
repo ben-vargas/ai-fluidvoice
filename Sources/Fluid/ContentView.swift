@@ -3210,8 +3210,14 @@ struct ContentView: View {
                     AnalyticsService.shared.recordOnboardingTryoutAttemptResult(outcome: .empty)
                 }
             }
+            GrokSTTRetryCenter.shared.noteEmptyResult(
+                isNormalRoute: route == .normal,
+                wasEdit: wasRewriteMode,
+                wasCommand: wasCommandMode,
+                wasPromptTest: promptTestSessionID != nil,
+                wasCancelled: self.cancelledOutputLifecycleID == expectedOverlayLifecycleID
+            )
             if route == .normal, !wasRewriteMode, !wasCommandMode, !promptTest.isActive {
-                GrokSTTRetryCenter.shared.markPendingAsPlainDictation()
                 self.recordEmptyDictationPerformance(startedAt: pipelineStartedAt, asrMs: transcriptionDurationMilliseconds)
             }
             // Finish the same short exit transition even when no text is emitted.
@@ -4421,7 +4427,10 @@ struct ContentView: View {
         }
     }
 
-    private func reprocessDictationText(_ transcribedText: String) async {
+    private func reprocessDictationText(
+        _ transcribedText: String,
+        delivery: GrokSTTRetryCenter.DeliveryCheck = { _ in .type }
+    ) async {
         // If live recording is still active, stop it first so reprocess does not
         // leave ASR running in the background (which causes the next hotkey press
         // to behave like a stop instead of start).
@@ -4527,13 +4536,16 @@ struct ContentView: View {
             self.pendingAIReprocessText = nil
         }
 
+        let deliveryDecision = delivery(finalText)
+        if deliveryDecision == .abandon { return }
+
         let targetContext = TypingService.captureRecordingTargetContext()
         NotchContentState.shared.recordingTargetContext = targetContext
         NotchContentState.shared.recordingTargetPID = targetContext?.pid
 
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         let isFluidFrontmost = frontmostApp?.bundleIdentifier?.contains("fluid") == true
-        let shouldTypeExternally = !isFluidFrontmost || self.isTranscriptionFocused == false
+        let shouldTypeExternally = deliveryDecision == .type && (!isFluidFrontmost || self.isTranscriptionFocused == false)
         if shouldTypeExternally {
             let typingTarget = self.resolveTypingTargetPID()
             if typingTarget.shouldRestoreOriginalFocus {
@@ -5142,7 +5154,14 @@ struct ContentView: View {
         NotchContentState.shared.onReprocessLastRequested = {
             self.reprocessLastDictation()
         }
-        GrokSTTRetryCenter.shared.deliverRecoveredDictation = { await self.reprocessDictationText($0) }
+        GrokSTTRetryCenter.shared.deliverRecoveredDictation = { text, check in
+            let lifecycle = self.overlayLifecycleID
+            await self.reprocessDictationText(text) { finalText in
+                // A newer recording owns the overlay; Escape cleared the mode this reprocess set.
+                guard self.overlayLifecycleID == lifecycle else { return .abandon }
+                return self.activeRecordingMode == .dictate ? check(finalText) : .keepWithoutTyping
+            }
+        }
         NotchContentState.shared.onCopyLastRequested = {
             self.copyLastDictationFromHistory()
         }

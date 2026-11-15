@@ -4,10 +4,11 @@ import SwiftUI
 /// Keeps the audio of the last failed Grok dictation in memory and offers to send it
 /// again. Nothing is written to disk and nothing falls back to a local engine.
 ///
-/// A recovered transcript of an ordinary dictation goes back through ContentView's normal
-/// finish (AI cleanup, history, typing into the focused field). ContentView says which
-/// recordings those are. Anything else, such as an Edit, Command or prompt-test capture,
-/// is shown for the user to copy and never typed, because only ContentView can route those.
+/// A recovered transcript of an ordinary dictation goes back through ContentView's reprocess
+/// path (AI cleanup, history, typing). ContentView says which recordings those are. It is typed
+/// only into the field that had focus when the user clicked Retry, and only if nothing
+/// superseded it meanwhile; otherwise it is kept in history and offered for copying. Anything
+/// else, such as an Edit, Command or prompt-test capture, is only ever offered for copying.
 @MainActor
 final class GrokSTTRetryCenter {
     static let shared = GrokSTTRetryCenter()
@@ -24,8 +25,26 @@ final class GrokSTTRetryCenter {
         var isPlainDictation = false
     }
 
-    /// Finishes a recovered dictation the way a normal one finishes. ContentView installs it.
-    var deliverRecoveredDictation: (@MainActor (String) async -> Void)?
+    /// What a recovered dictation may still do once its cleanup has finished.
+    enum DeliveryDecision: Equatable {
+        /// Type it: the field from the Retry click still has focus.
+        case type
+        /// Keep it in history without typing, because the destination is gone.
+        case keepWithoutTyping
+        /// A newer recording owns the app now. Do nothing more, not even UI cleanup.
+        case abandon
+    }
+
+    typealias DeliveryCheck = @MainActor (String) -> DeliveryDecision
+
+    /// Finishes a recovered dictation through ContentView's reprocess path. ContentView installs
+    /// it, and asks the check, with the final text, right before it would type.
+    var deliverRecoveredDictation: (@MainActor (String, @escaping DeliveryCheck) async -> Void)?
+
+    /// Text currently offered with a Copy button.
+    private(set) var recoveredTextForCopy: String?
+    /// The delivery that may still type. Cleared by a new recording or Dismiss.
+    private var activeDeliveryID: UUID?
 
     private(set) var pending: Pending?
     private var expiryTask: Task<Void, Never>?
@@ -35,13 +54,23 @@ final class GrokSTTRetryCenter {
     private var attemptID = UUID()
     private let now: () -> Date
     private let transcribe: Transcriber
+    private let captureFocus: @MainActor () -> TypingService.CapturedFocusTarget?
+    private let isFocusActive: @MainActor (TypingService.CapturedFocusTarget) -> Bool
     /// `nil` in tests, which have no screen to put a panel on.
     private let panel: GrokSTTFailurePanelController?
 
     typealias Transcriber = @MainActor ([Float], GrokSTTDictationController.Configuration) async throws -> String
 
-    init(now: @escaping () -> Date = Date.init, transcribe: Transcriber? = nil, showsPanel: Bool = true) {
+    init(
+        now: @escaping () -> Date = Date.init,
+        transcribe: Transcriber? = nil,
+        showsPanel: Bool = true,
+        captureFocus: @escaping @MainActor () -> TypingService.CapturedFocusTarget? = TypingService.captureSystemFocusTarget,
+        isFocusActive: @escaping @MainActor (TypingService.CapturedFocusTarget) -> Bool = TypingService.isExactFocusTargetActive
+    ) {
         self.now = now
+        self.captureFocus = captureFocus
+        self.isFocusActive = isFocusActive
         self.transcribe = transcribe ?? { samples, configuration in
             try await GrokSTTRESTClient(resolver: GrokSTTCredentialResolver.shared).transcribePCM(
                 samples,
@@ -92,15 +121,19 @@ final class GrokSTTRetryCenter {
         )
     }
 
-    /// ContentView calls this when the recording that just failed was an ordinary dictation:
-    /// not an Edit, Command or prompt-test capture, and not a cancelled or sandboxed one.
-    func markPendingAsPlainDictation() {
+    /// ContentView reports what the recording that just came back empty was. Only an ordinary
+    /// dictation may be typed after a retry: the normal route, not an Edit or Command capture,
+    /// not a prompt test (even one whose editor has since closed), and not cancelled with Escape.
+    func noteEmptyResult(isNormalRoute: Bool, wasEdit: Bool, wasCommand: Bool, wasPromptTest: Bool, wasCancelled: Bool) {
+        guard isNormalRoute, !wasEdit, !wasCommand, !wasPromptTest, !wasCancelled else { return }
         self.pending?.isPlainDictation = true
     }
 
     /// Drops the kept audio, cancels any retry in flight, and hides the panel.
     func clear() {
         self.invalidateAttempt()
+        self.activeDeliveryID = nil
+        self.recoveredTextForCopy = nil
         self.pending = nil
         self.expiryTask?.cancel()
         self.expiryTask = nil
@@ -114,6 +147,8 @@ final class GrokSTTRetryCenter {
         }
         let attempt = UUID()
         self.attemptID = attempt
+        // The panel does not take focus, so this is the field the user means the text for.
+        let focus = pending.isPlainDictation ? self.captureFocus() : nil
         self.panel?.showRetrying()
         self.retryTask = Task { @MainActor [weak self] in
             let outcome: Result<String, GrokSTTError>
@@ -127,7 +162,7 @@ final class GrokSTTRetryCenter {
             self.retryTask = nil
             switch outcome {
             case let .success(text):
-                self.finishRecovered(text, isPlainDictation: pending.isPlainDictation)
+                self.finishRecovered(text, isPlainDictation: pending.isPlainDictation, focus: focus)
             case .failure(.emptyTranscript), .failure(.invalidAudio):
                 self.clear()
             case let .failure(failure):
@@ -145,7 +180,7 @@ final class GrokSTTRetryCenter {
     /// Applies the same local cleanup ASRService gives a normal dictation. An ordinary dictation
     /// then finishes through ContentView; anything else is shown with a Copy button. The audio
     /// is no longer needed once the text exists.
-    private func finishRecovered(_ rawText: String, isPlainDictation: Bool) {
+    private func finishRecovered(_ rawText: String, isPlainDictation: Bool, focus: TypingService.CapturedFocusTarget?) {
         let cleaned = ASRService.applySpokenPunctuationFormatting(
             ASRService.applyCustomDictionary(ASRService.removeFillerWords(rawText))
         ).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -153,19 +188,42 @@ final class GrokSTTRetryCenter {
             self.clear()
             return
         }
-        if isPlainDictation, let deliver = self.deliverRecoveredDictation {
-            GrokSTTLog.info("retry_recovered delivering as dictation")
-            self.clear()
-            Task { @MainActor in await deliver(cleaned) }
+        guard isPlainDictation, let deliver = self.deliverRecoveredDictation else {
+            self.offerForCopy(cleaned)
             return
         }
+        GrokSTTLog.info("retry_recovered delivering as dictation")
+        self.clear()
+        let delivery = UUID()
+        self.activeDeliveryID = delivery
+        Task { @MainActor [weak self] in
+            await deliver(cleaned) { [weak self] finalText in
+                self?.decideDelivery(delivery, focus: focus, finalText: finalText) ?? .abandon
+            }
+            if self?.activeDeliveryID == delivery { self?.activeDeliveryID = nil }
+        }
+    }
+
+    /// Runs after cleanup, right before typing. A new recording or Dismiss has cleared the
+    /// delivery by then; a moved focus leaves the text in history and offers it for copying.
+    private func decideDelivery(_ delivery: UUID, focus: TypingService.CapturedFocusTarget?, finalText: String) -> DeliveryDecision {
+        guard self.activeDeliveryID == delivery else { return .abandon }
+        self.activeDeliveryID = nil
+        if let focus, self.isFocusActive(focus) { return .type }
+        GrokSTTLog.info("retry_recovered not typed: the field from the Retry click lost focus")
+        self.offerForCopy(finalText)
+        return .keepWithoutTyping
+    }
+
+    private func offerForCopy(_ text: String) {
         self.pending = nil
+        self.recoveredTextForCopy = text
         self.scheduleExpiry()
         self.panel?.showRecovered(
-            text: cleaned,
+            text: text,
             onCopy: { [weak self] in
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(cleaned, forType: .string)
+                NSPasteboard.general.setString(text, forType: .string)
                 self?.clear()
             },
             onDismiss: { [weak self] in self?.clear() }

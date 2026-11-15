@@ -1,4 +1,5 @@
 @testable import FluidVoice_Debug
+import ApplicationServices
 import Foundation
 import XCTest
 
@@ -293,60 +294,179 @@ private final class FakeDictationSession: StreamingTranscriptionSession, @unchec
 final class GrokSTTRetryCenterTests: XCTestCase {
     private let configuration = GrokSTTDictationController.Configuration(languageCode: "en", keyterms: [])
     private let samples = [Float](repeating: 0.1, count: 1600)
+    private let field = TypingService.CapturedFocusTarget(pid: 1, window: nil, element: AXUIElementCreateSystemWide())
 
-    func testRecoveredOrdinaryDictationFinishesThroughTheNormalPath() async {
-        var delivered: [String] = []
-        let center = GrokSTTRetryCenter(transcribe: { _, _ in "hello world" }, showsPanel: false)
-        center.deliverRecoveredDictation = { delivered.append($0) }
+    /// What ContentView's reprocess path does with a recovered dictation, reduced to the two
+    /// things the retry center controls: the text it hands over and the decision it returns.
+    @MainActor
+    private final class Reprocess {
+        var texts: [String] = []
+        var decisions: [GrokSTTRetryCenter.DeliveryDecision] = []
+        /// Runs between "cleanup finished" and "about to type".
+        var beforeTyping: () -> Void = {}
 
+        func install(on center: GrokSTTRetryCenter) {
+            center.deliverRecoveredDictation = { text, check in
+                self.texts.append(text)
+                await Task.yield()
+                self.beforeTyping()
+                self.decisions.append(check(text + " (cleaned)"))
+            }
+        }
+    }
+
+    private func makeCenter(
+        transcribe: @escaping GrokSTTRetryCenter.Transcriber = { _, _ in "hello world" },
+        focusedAtClick: Bool = true,
+        stillFocused: @escaping () -> Bool = { true }
+    ) -> GrokSTTRetryCenter {
+        let field = self.field
+        return GrokSTTRetryCenter(
+            transcribe: transcribe,
+            showsPanel: false,
+            captureFocus: { focusedAtClick ? field : nil },
+            isFocusActive: { _ in stillFocused() }
+        )
+    }
+
+    private func failOrdinaryDictation(on center: GrokSTTRetryCenter) {
         center.retain(samples: self.samples, error: .timeout, configuration: self.configuration)
-        center.markPendingAsPlainDictation()
+        center.noteEmptyResult(isNormalRoute: true, wasEdit: false, wasCommand: false, wasPromptTest: false, wasCancelled: false)
+    }
+
+    private func retryAndSettle(_ center: GrokSTTRetryCenter) async {
         center.retry()
         await center.retryInFlight?.value
-        await Self.settle()
+        for _ in 0..<10 { await Task.yield() }
+    }
 
-        XCTAssertEqual(delivered.map { $0.lowercased() }, ["hello world"])
+    func testRecoveredOrdinaryDictationIsTypedIntoTheFieldFromTheRetryClick() async {
+        let reprocess = Reprocess()
+        let center = self.makeCenter()
+        reprocess.install(on: center)
+
+        self.failOrdinaryDictation(on: center)
+        await self.retryAndSettle(center)
+
+        XCTAssertEqual(reprocess.texts.map { $0.lowercased() }, ["hello world"])
+        XCTAssertEqual(reprocess.decisions, [.type])
         XCTAssertNil(center.pending)
+        XCTAssertNil(center.recoveredTextForCopy)
         XCTAssertFalse(center.isRetrying)
     }
 
-    func testRecoveredTextIsNeverTypedUnlessContentViewMarkedTheRecording() async {
-        var delivered: [String] = []
-        let center = GrokSTTRetryCenter(transcribe: { _, _ in "delete everything" }, showsPanel: false)
-        center.deliverRecoveredDictation = { delivered.append($0) }
+    func testOnlyAnOrdinaryUncancelledDictationIsEverMarked() {
+        let cases: [(normal: Bool, edit: Bool, command: Bool, promptTest: Bool, cancelled: Bool)] = [
+            (false, false, false, false, false), // history-only or onboarding route
+            (true, true, false, false, false), // Edit
+            (true, false, true, false, false), // Command
+            (true, false, false, true, false), // prompt test, even after its editor closed
+            (true, false, false, false, true), // Escape while the final transcript was pending
+        ]
+        for item in cases {
+            let center = self.makeCenter()
+            center.retain(samples: self.samples, error: .timeout, configuration: self.configuration)
+            center.noteEmptyResult(
+                isNormalRoute: item.normal,
+                wasEdit: item.edit,
+                wasCommand: item.command,
+                wasPromptTest: item.promptTest,
+                wasCancelled: item.cancelled
+            )
+            XCTAssertEqual(center.pending?.isPlainDictation, false, "\(item)")
+            center.clear()
+        }
+    }
 
-        // An Edit, Command or prompt-test capture is retained but never marked.
+    func testUnmarkedRecordingIsOfferedForCopyAndNeverDelivered() async {
+        let reprocess = Reprocess()
+        let center = self.makeCenter(transcribe: { _, _ in "delete everything" })
+        reprocess.install(on: center)
+
         center.retain(samples: self.samples, error: .timeout, configuration: self.configuration)
-        center.retry()
-        await center.retryInFlight?.value
-        await Self.settle()
+        await self.retryAndSettle(center)
 
-        XCTAssertTrue(delivered.isEmpty)
+        XCTAssertTrue(reprocess.texts.isEmpty)
+        XCTAssertEqual(center.recoveredTextForCopy?.lowercased(), "delete everything")
         XCTAssertNil(center.pending)
     }
 
-    func testMarkSurvivesAFailedRetryAndDoesNotLeakIntoTheNextRecording() async {
-        var delivered: [String] = []
-        var attempts = 0
-        let center = GrokSTTRetryCenter(
-            transcribe: { _, _ in
-                attempts += 1
-                if attempts == 1 { throw GrokSTTError.timeout }
-                return "second try"
-            },
-            showsPanel: false
-        )
-        center.deliverRecoveredDictation = { delivered.append($0) }
+    func testTextIsKeptForCopyWhenTheFieldLostFocusDuringCleanup() async {
+        var focused = true
+        let reprocess = Reprocess()
+        reprocess.beforeTyping = { focused = false }
+        let center = self.makeCenter(stillFocused: { focused })
+        reprocess.install(on: center)
 
-        center.retain(samples: self.samples, error: .timeout, configuration: self.configuration)
-        center.markPendingAsPlainDictation()
+        self.failOrdinaryDictation(on: center)
+        await self.retryAndSettle(center)
+
+        XCTAssertEqual(reprocess.decisions, [.keepWithoutTyping])
+        XCTAssertEqual(center.recoveredTextForCopy?.lowercased(), "hello world (cleaned)")
+    }
+
+    func testTextIsNotTypedWhenNoFieldWasFocusedAtTheRetryClick() async {
+        let reprocess = Reprocess()
+        let center = self.makeCenter(focusedAtClick: false)
+        reprocess.install(on: center)
+
+        self.failOrdinaryDictation(on: center)
+        await self.retryAndSettle(center)
+
+        XCTAssertEqual(reprocess.decisions, [.keepWithoutTyping])
+    }
+
+    func testANewRecordingDuringCleanupAbandonsTheDelivery() async {
+        let reprocess = Reprocess()
+        let center = self.makeCenter()
+        // GrokSTTProvider.recordingSessionWillStart clears the center for every new dictation.
+        reprocess.beforeTyping = { center.clear() }
+        reprocess.install(on: center)
+
+        self.failOrdinaryDictation(on: center)
+        await self.retryAndSettle(center)
+
+        XCTAssertEqual(reprocess.decisions, [.abandon])
+        XCTAssertNil(center.recoveredTextForCopy)
+    }
+
+    func testANewRecordingDuringTheUploadDiscardsTheRetry() async {
+        let gate = TestGate()
+        let reprocess = Reprocess()
+        let center = self.makeCenter(transcribe: { _, _ in
+            await gate.wait()
+            return "too late"
+        })
+        reprocess.install(on: center)
+
+        self.failOrdinaryDictation(on: center)
         center.retry()
-        await center.retryInFlight?.value
+        let upload = center.retryInFlight
+        center.clear()
+        gate.signal()
+        await upload?.value
+        for _ in 0..<10 { await Task.yield() }
+
+        XCTAssertTrue(reprocess.texts.isEmpty)
+        XCTAssertNil(center.recoveredTextForCopy)
+    }
+
+    func testMarkSurvivesAFailedRetryAndDoesNotLeakIntoTheNextRecording() async {
+        var attempts = 0
+        let reprocess = Reprocess()
+        let center = self.makeCenter(transcribe: { _, _ in
+            attempts += 1
+            if attempts == 1 { throw GrokSTTError.timeout }
+            return "second try"
+        })
+        reprocess.install(on: center)
+
+        self.failOrdinaryDictation(on: center)
+        await self.retryAndSettle(center)
         XCTAssertEqual(center.pending?.isPlainDictation, true, "A failed retry keeps the recording and its mark")
-        center.retry()
-        await center.retryInFlight?.value
-        await Self.settle()
-        XCTAssertEqual(delivered.map { $0.lowercased() }, ["second try"])
+        await self.retryAndSettle(center)
+        XCTAssertEqual(reprocess.texts.map { $0.lowercased() }, ["second try"])
+        XCTAssertEqual(reprocess.decisions, [.type])
 
         // A later failed recording starts unmarked.
         center.retain(samples: self.samples, error: .timeout, configuration: self.configuration)
@@ -354,14 +474,9 @@ final class GrokSTTRetryCenterTests: XCTestCase {
         center.clear()
     }
 
-    func testMarkingWithNothingRetainedDoesNothing() {
-        let center = GrokSTTRetryCenter(transcribe: { _, _ in "" }, showsPanel: false)
-        center.markPendingAsPlainDictation()
+    func testNotingAnEmptyResultWithNothingRetainedDoesNothing() {
+        let center = self.makeCenter()
+        center.noteEmptyResult(isNormalRoute: true, wasEdit: false, wasCommand: false, wasPromptTest: false, wasCancelled: false)
         XCTAssertNil(center.pending)
-    }
-
-    /// Delivery hops through one more MainActor task after the retry task ends.
-    private static func settle() async {
-        for _ in 0..<5 { await Task.yield() }
     }
 }
