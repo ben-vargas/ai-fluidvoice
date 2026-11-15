@@ -2,8 +2,8 @@ import Foundation
 
 extension MeetingBackendID {
     /// Grok Speech (xAI) through the in-pipeline workflow, which transcribes with the
-    /// selected voice engine. Chosen automatically while Grok is the selected engine and
-    /// the meeting's language is one Grok accepts.
+    /// selected voice engine. `GrokMeetingBackends` chooses it only where the canonical Grok
+    /// backend cannot run: on Intel Macs, and for a Grok language outside the canonical set.
     static let grokSTT = MeetingBackendID(rawValue: "hosted-grok-stt-legacy-v1")
 }
 
@@ -11,7 +11,7 @@ extension MeetingBackendID {
 /// diarization, echo policy, checkpoints) but declares Grok's languages and hosted
 /// execution. The legacy backend is English-only because its local model is.
 ///
-/// A canonical-evidence Grok backend can replace this later without touching the pipeline.
+/// `GrokMeetingNemotronBackend` is the canonical-evidence backend used everywhere else.
 @MainActor
 final class GrokMeetingTranscriptionBackend: MeetingTranscriptionBackend {
     static let descriptor = MeetingBackendDescriptor(
@@ -35,10 +35,6 @@ final class GrokMeetingTranscriptionBackend: MeetingTranscriptionBackend {
     /// Grok takes a meeting only while it is the selected engine and it accepts the meeting's
     /// language. Every other meeting stays with upstream's local backend, the one a Mac without
     /// Grok would use, so a language Grok lacks never fails a meeting and never sends its audio out.
-    static func handles(languageCode: String) -> Bool {
-        self.handles(languageCode: languageCode, selectedModel: SettingsStore.shared.selectedSpeechModel)
-    }
-
     nonisolated static func handles(languageCode: String, selectedModel: SettingsStore.SpeechModel) -> Bool {
         guard selectedModel == .grokSTT else { return false }
         guard GrokSTTLanguage.normalized(languageCode) != nil else {

@@ -1409,7 +1409,8 @@ final class MeetingProcessingPipeline: MeetingProcessingControlling {
             self.backendIDProvider = { _ in registryDefault }
         } else {
             self.backendIDProvider = { languageCode in
-                if GrokMeetingTranscriptionBackend.handles(languageCode: languageCode) { return .grokSTT }
+                let engine = SettingsStore.shared.selectedSpeechModel
+                if let grok = GrokMeetingBackends.backendID(languageCode: languageCode, selectedModel: engine) { return grok }
                 return SettingsStore.shared.meetingTranscriptionBackendID.forNewMeetingAttempt
             }
         }
@@ -1496,7 +1497,7 @@ final class MeetingProcessingPipeline: MeetingProcessingControlling {
                 }
             )
         )
-        if backendID == .parakeetNemotron {
+        if backendID == .parakeetNemotron || GrokMeetingBackends.diarizesWithNemotron(backendID) {
             try await self.prepareDiarizationModel()
         }
         let plan = try backend.plan(request)
@@ -1612,7 +1613,7 @@ final class MeetingProcessingPipeline: MeetingProcessingControlling {
         }
 
         let echoProvider: any MeetingUnitEchoVerdictProviding = self.echoVerdictProvider
-            ?? (plan.backendID == .parakeetNemotron
+            ?? (plan.backendID == .parakeetNemotron || GrokMeetingBackends.diarizesWithNemotron(plan.backendID)
                 ? MeetingTextOverlapEchoVerdictProvider()
                 : MeetingFailClosedEchoVerdictProvider())
         let echoVerdicts = try await echoProvider.echoVerdicts(
@@ -1691,7 +1692,7 @@ final class MeetingProcessingPipeline: MeetingProcessingControlling {
         attempt.completedAt = Date()
         attempt.pipelineVersion = request.configuration.pipelineVersion
         attempt.asrProvider = plan.backendID.rawValue
-        attempt.asrModel = request.configuration.asrModel
+        attempt.asrModel = GrokMeetingBackends.recordedASRModel(for: plan.backendID) ?? request.configuration.asrModel
         attempt.languageCode = request.configuration.languageCode
         attempt.diarizationModel = request.configuration.diarizationFingerprint
         attempt.backendID = plan.backendID.rawValue

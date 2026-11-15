@@ -119,6 +119,28 @@ final nonisolated class GrokSTTRESTClient: @unchecked Sendable {
         )
     }
 
+    /// The meeting path: the transcript with xAI's word timings.
+    func transcribePCMWithWords(
+        _ samples: [Float],
+        languageCode: String?,
+        keyterms: [String] = [],
+        timeout: TimeInterval
+    ) async throws -> GrokSTTRESTTranscript {
+        if samples.isEmpty {
+            throw GrokSTTError.invalidAudio
+        }
+        let wav = GrokSTTAudioConverter.wav(fromFloat32: samples)
+        if wav.count > Self.maxFileBytes {
+            throw GrokSTTError.fileTooLarge
+        }
+        return try await self.sendFileWithUnauthorizedRetryForWords(
+            file: wav,
+            languageCode: languageCode,
+            keyterms: keyterms,
+            timeout: timeout
+        )
+    }
+
     func transcribeWAV(
         _ wav: Data,
         filename: String,
@@ -138,7 +160,7 @@ final nonisolated class GrokSTTRESTClient: @unchecked Sendable {
             keyterms: keyterms,
             credential: credential,
             timeout: timeout
-        )
+        ).text
     }
 
     /// Native meeting/file REST. Sends the user file as-is (no `audio_format`). Never POSTs a video container.
@@ -176,7 +198,7 @@ final nonisolated class GrokSTTRESTClient: @unchecked Sendable {
             keyterms: keyterms,
             credential: credential,
             timeout: resolvedTimeout
-        )
+        ).text
     }
 
     private func initialCredential(_ supplied: GrokSTTCredential?) async throws -> GrokSTTCredential {
@@ -194,7 +216,7 @@ final nonisolated class GrokSTTRESTClient: @unchecked Sendable {
         keyterms: [String],
         credential: GrokSTTCredential?,
         timeout: TimeInterval
-    ) async throws -> String {
+    ) async throws -> GrokSTTRESTTranscript {
         var current = try await self.initialCredential(credential)
         var didRetryUnauthorized = false
         while true {
@@ -218,6 +240,23 @@ final nonisolated class GrokSTTRESTClient: @unchecked Sendable {
                 )
             }
         }
+    }
+
+    private func sendFileWithUnauthorizedRetryForWords(
+        file: Data,
+        languageCode: String?,
+        keyterms: [String],
+        timeout: TimeInterval
+    ) async throws -> GrokSTTRESTTranscript {
+        try await self.sendFileWithUnauthorizedRetry(
+            file: file,
+            filename: "meeting.wav",
+            mimeType: "audio/wav",
+            languageCode: languageCode,
+            keyterms: keyterms,
+            credential: nil,
+            timeout: timeout
+        )
     }
 
     static func fileSizeBytes(at fileURL: URL) -> Int64 {
@@ -244,7 +283,7 @@ final nonisolated class GrokSTTRESTClient: @unchecked Sendable {
         keyterms: [String],
         credential: GrokSTTCredential,
         timeout: TimeInterval
-    ) async throws -> String {
+    ) async throws -> GrokSTTRESTTranscript {
         let boundary = "FluidGrokSTT\(UUID().uuidString.replacingOccurrences(of: "-", with: ""))"
         var body = Data()
 
@@ -306,10 +345,31 @@ final nonisolated class GrokSTTRESTClient: @unchecked Sendable {
         if text.isEmpty {
             throw GrokSTTError.emptyTranscript
         }
-        return text
+        let words = (decoded.words ?? []).compactMap { word -> ASRWordTiming? in
+            let trimmed = word.text?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !trimmed.isEmpty, let start = word.start, let end = word.end,
+                  start.isFinite, end.isFinite, start >= 0, end >= start
+            else { return nil }
+            return ASRWordTiming(text: trimmed, start: start, end: end)
+        }
+        return GrokSTTRESTTranscript(text: text, words: words)
     }
 }
 
+/// A REST transcript. `words` holds xAI's word timings, in seconds from the start of the upload;
+/// it is empty when xAI sent none or sent ones that cannot be used.
+nonisolated struct GrokSTTRESTTranscript: Sendable {
+    let text: String
+    let words: [ASRWordTiming]
+}
+
 private nonisolated struct GrokSTTRESTTranscriptResponse: Decodable, Sendable {
+    struct Word: Decodable, Sendable {
+        let text: String?
+        let start: Double?
+        let end: Double?
+    }
+
     let text: String?
+    let words: [Word]?
 }

@@ -507,7 +507,7 @@ final class MeetingTranscriptionBackendTests: XCTestCase {
     func testDefaultRegistryUsesProductionDefaultAndKeepsLegacyRollback() throws {
         let registry = MeetingTranscriptionBackendRegistry.makeDefault()
         XCTAssertEqual(registry.defaultBackendID, .productionDefault)
-        XCTAssertEqual(registry.registeredBackendIDs, [.legacyCompatibility, .parakeetNemotron, .grokSTT])
+        XCTAssertEqual(registry.registeredBackendIDs, [.legacyCompatibility, .parakeetNemotron, .grokSTT, .grokSTTNemotron])
 
         let backend = try registry.makeBackend(
             id: registry.defaultBackendID,

@@ -523,6 +523,36 @@ final class GrokMeetingLiveRecognizerTests: XCTestCase {
         XCTAssertEqual(sockets.count, 1, "No further socket once the load was cancelled")
     }
 
+    func testStoppingARealEngineEndsItsWaitForAFirstConnection() async {
+        let sockets = Sockets([FakeSocket(startError: .offline), FakeSocket()])
+        let waiting = expectation(description: "the recognizer is waiting to retry")
+        let recognizer = GrokMeetingLiveRecognizer(
+            languageCode: "en",
+            socketFactory: { sockets.make($0) },
+            keyterms: { [] },
+            // Like the real sleep: it ends only when the engine cancels its load task.
+            sleep: { _ in
+                waiting.fulfill()
+                try await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        )
+        let engine = MeetingLiveTrackEngine(kind: .microphone, recognizer: recognizer)
+        await engine.configure(
+            onPartial: { _, _, _, _, _ in },
+            onUtterance: { _, _, _, _, _ in },
+            onDegraded: { _, reason in XCTFail("A stopped load is not a failure: \(reason)") },
+            onReady: { _ in XCTFail("Captions must not become ready after stop") }
+        )
+        await engine.start()
+        await fulfillment(of: [waiting], timeout: 5)
+
+        let started = Date()
+        await engine.stop()
+        XCTAssertLessThan(Date().timeIntervalSince(started), 5, "stop() cancels the load instead of waiting it out")
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(sockets.count, 1, "No further connection attempt after stop")
+    }
+
     func testTheEngineBecomesReadyAfterAFirstConnectionThatFailedForNow() async {
         let working = FakeSocket()
         let sockets = Sockets([FakeSocket(startError: .timeout), working])
@@ -658,3 +688,483 @@ final class GrokMeetingLiveRecognizerTests: XCTestCase {
     }
 }
 #endif
+
+// MARK: - Canonical backend
+
+@MainActor
+final class GrokMeetingNemotronBackendTests: XCTestCase {
+    // MARK: Routing
+
+    func testGrokUsesTheCanonicalBackendWhereverItCanRun() {
+        XCTAssertEqual(GrokMeetingBackends.backendID(languageCode: "en", selectedModel: .grokSTT), .grokSTTNemotron)
+        XCTAssertEqual(GrokMeetingBackends.backendID(languageCode: "uk", selectedModel: .grokSTT), .grokSTTNemotron)
+        // A Grok language upstream's canonical pipeline does not know keeps the in-pipeline workflow.
+        XCTAssertEqual(GrokMeetingBackends.backendID(languageCode: "ja", selectedModel: .grokSTT), .grokSTT)
+        // A language Grok lacks, or another engine, leaves the meeting to upstream.
+        XCTAssertNil(GrokMeetingBackends.backendID(languageCode: "et", selectedModel: .grokSTT))
+        XCTAssertNil(GrokMeetingBackends.backendID(languageCode: "en", selectedModel: .fluidParakeetPro))
+
+        XCTAssertTrue(GrokMeetingBackends.canonicalLanguageCodes.isSubset(of: VoiceEngineLanguageCatalog.parakeetV3LanguageIDs))
+        XCTAssertTrue(GrokMeetingBackends.canonicalLanguageCodes.isSubset(of: Set(GrokSTTLanguage.codes)))
+        XCTAssertTrue(GrokMeetingBackends.diarizesWithNemotron(.grokSTTNemotron))
+        XCTAssertFalse(GrokMeetingBackends.diarizesWithNemotron(.grokSTT))
+        XCTAssertFalse(GrokMeetingBackends.diarizesWithNemotron(.parakeetNemotron))
+        XCTAssertEqual(GrokMeetingBackends.recordedASRModel(for: .grokSTTNemotron), "grok-stt")
+        XCTAssertNil(GrokMeetingBackends.recordedASRModel(for: .parakeetNemotron))
+    }
+
+    func testDefaultRegistryMakesTheCanonicalGrokBackendUnderItsOwnIdentity() throws {
+        let backend = try MeetingTranscriptionBackendRegistry.makeDefault().makeBackend(
+            id: .grokSTTNemotron,
+            context: MeetingBackendHostContext(legacyExecutor: { _, _ in throw MeetingProcessingError.noRecoverableAudio })
+        )
+        XCTAssertTrue(backend is GrokMeetingNemotronBackend)
+        XCTAssertEqual(backend.descriptor.execution, .hosted)
+        XCTAssertEqual(backend.descriptor.resultContract, .canonicalEvidence)
+        XCTAssertEqual(backend.descriptor.supportedFinalPrecisions, [.word, .utterance])
+    }
+
+    func testAGrokMeetingPreparesTheSpeakerModelBeforePlanning() async {
+        let settings = SettingsStore.shared
+        let previous = settings.selectedSpeechModel
+        defer { settings.selectedSpeechModel = previous }
+        settings.selectedSpeechModel = .grokSTT
+
+        // Only backends that diarize with Nemotron reach this preparation step.
+        let marker = CocoaError(.userCancelled)
+        var preparations = 0
+        let pipeline = MeetingProcessingPipeline(
+            asrServiceProvider: { XCTFail("The canonical Grok backend never loads a local speech model"); return ASRService() },
+            managesModelResidency: false,
+            prepareDiarizationModel: { preparations += 1; throw marker },
+            preferredASRModelProvider: { XCTFail("No local speech model is chosen for a Grok meeting"); return .fluidParakeetPro }
+        )
+        do {
+            _ = try await pipeline.process(
+                session: self.makeSession(tracks: [self.makeMicTrack(chunks: [self.makeChunk(start: 100, end: 103)])]),
+                sessionDirectory: FileManager.default.temporaryDirectory,
+                progress: { _ in }
+            )
+            XCTFail("Expected the preparation marker")
+        } catch {
+            XCTAssertEqual(error as? CocoaError, marker)
+        }
+        XCTAssertEqual(preparations, 1)
+    }
+
+    // MARK: Plan and execute
+
+    func testPlanCarriesGrokIdentityAndUpstreamsChecks() throws {
+        let session = self.makeSession(tracks: [self.makeMicTrack(chunks: [self.makeChunk(start: 100, end: 103)])])
+        let backend = self.makeBackend(local: FakeLocalRuntime(), transcriber: { _, _, _ in GrokSTTRESTTranscript(text: "", words: []) })
+        let request = self.makeRequest(session: session)
+        let plan = try backend.plan(request)
+        XCTAssertEqual(plan.backendID, .grokSTTNemotron)
+        XCTAssertNil(plan.agreementDefect(with: request, descriptor: backend.descriptor))
+
+        // A language outside the canonical set is refused before anything is uploaded.
+        let estonian = self.makeSession(tracks: session.audioTracks, languageCode: "et")
+        XCTAssertThrowsError(try backend.plan(self.makeRequest(session: estonian, languageCode: "et"))) { error in
+            XCTAssertEqual(error as? MeetingBackendError, .unsupportedLanguage(backend: .grokSTTNemotron, languageCode: "et"))
+        }
+
+        // Upstream's planner still requires the local speaker model.
+        struct Missing: Error {}
+        let unprepared = self.makeBackend(
+            local: FakeLocalRuntime(),
+            locator: StubLocator(error: Missing()),
+            transcriber: { _, _, _ in GrokSTTRESTTranscript(text: "", words: []) }
+        )
+        XCTAssertThrowsError(try unprepared.plan(request)) { XCTAssertTrue($0 is Missing) }
+    }
+
+    func testExecuteReturnsWordEvidenceUnderGrokIdentityThatUpstreamAssembles() async throws {
+        let chunk = self.makeChunk(start: 100, end: 103)
+        let track = self.makeMicTrack(chunks: [chunk])
+        let session = self.makeSession(tracks: [track])
+        let local = FakeLocalRuntime()
+        let uploads = Uploads()
+        let backend = self.makeBackend(local: local, transcriber: { samples, languageCode, keyterms in
+            uploads.record(sampleCount: samples.count, languageCode: languageCode, keyterms: keyterms)
+            return GrokSTTRESTTranscript(text: "hello there", words: [
+                ASRWordTiming(text: "hello", start: 0.2, end: 0.6),
+                ASRWordTiming(text: "there", start: 0.7, end: 1.1),
+            ])
+        })
+        let request = self.makeRequest(session: session)
+        let plan = try backend.plan(request)
+        let manifest = try MeetingAnalysisManifestBuilder(
+            plan: plan,
+            observer: FixtureObserver(results: [MeetingAnalysisChunkKey(trackID: track.id, chunkID: chunk.id): self.makeObserved(chunk, duration: 3)]),
+            analysisSampleRate: 16_000
+        ).build()
+        let epoch = try XCTUnwrap(manifest.track(track.id)?.epochs.first)
+        local.diarizer.segmentsByEpoch = [epoch.id: [MeetingNemotronSpeakerSegment(slotIndex: 1, start: 0, end: 3)]]
+
+        let outcome = try await backend.execute(plan: plan, manifest: manifest, progress: { _ in })
+        guard case let .canonicalEvidence(bundle) = outcome else { return XCTFail("Expected canonical evidence") }
+
+        XCTAssertEqual(bundle.evidence.backendID, .grokSTTNemotron)
+        XCTAssertEqual(bundle.evidence.attemptID, plan.attemptID)
+        XCTAssertEqual(bundle.evidence.units.map(\.text), ["hello", "there"])
+        XCTAssertTrue(bundle.evidence.units.allSatisfy { $0.precision == .word })
+        XCTAssertTrue(bundle.coverageReceipts.allSatisfy { $0.status == .processed })
+        XCTAssertEqual(uploads.all.count, 1)
+        XCTAssertEqual(uploads.all.first?.sampleCount, 48_000)
+        XCTAssertEqual(uploads.all.first?.languageCode, "en")
+        XCTAssertEqual(uploads.all.first?.keyterms, ["FluidVoice"])
+        XCTAssertEqual(local.diarizationScopes, 1, "Speaker detection stays with the local runtime")
+        XCTAssertEqual(local.localASRScopes, 0, "No local speech model is prepared")
+
+        // Upstream's assembler accepts the evidence against this backend's plan and manifest.
+        let assembly = try MeetingTranscriptAssembler().assemble(MeetingAssemblyInput(
+            plan: plan,
+            manifest: manifest,
+            evidence: bundle.evidence,
+            coverageReceipts: bundle.coverageReceipts
+        ))
+        XCTAssertFalse(assembly.segments.isEmpty)
+    }
+
+    func testAFailedUploadFailsTheAttemptInsteadOfPublishingAPartialTranscript() async throws {
+        let first = self.makeChunk(sequence: 0, start: 100, end: 102)
+        let second = self.makeChunk(sequence: 1, start: 105, end: 107)
+        let track = self.makeMicTrack(chunks: [first, second])
+        let session = self.makeSession(tracks: [track])
+        let uploads = Uploads()
+        let backend = self.makeBackend(local: FakeLocalRuntime(), transcriber: { samples, languageCode, keyterms in
+            uploads.record(sampleCount: samples.count, languageCode: languageCode, keyterms: keyterms)
+            throw GrokSTTError.forbidden
+        })
+        let plan = try backend.plan(self.makeRequest(session: session))
+        let manifest = try MeetingAnalysisManifestBuilder(
+            plan: plan,
+            observer: FixtureObserver(results: [
+                MeetingAnalysisChunkKey(trackID: track.id, chunkID: first.id): self.makeObserved(first, duration: 2),
+                MeetingAnalysisChunkKey(trackID: track.id, chunkID: second.id): self.makeObserved(second, duration: 2),
+            ]),
+            analysisSampleRate: 16_000
+        ).build()
+        XCTAssertEqual(manifest.track(track.id)?.epochs.count, 2)
+
+        do {
+            _ = try await backend.execute(plan: plan, manifest: manifest, progress: { _ in })
+            XCTFail("Expected the upload failure")
+        } catch {
+            XCTAssertEqual(error as? GrokSTTError, .forbidden)
+        }
+        XCTAssertEqual(uploads.all.count, 1, "The second epoch is not uploaded once the attempt is lost")
+    }
+
+    // MARK: Speech session
+
+    func testSessionOffsetsWordsAcrossRequestsAndKeepsThemInsideTheirAudio() async throws {
+        let uploads = Uploads()
+        var session = self.makeASRSession { samples, _, _ in
+            let index = uploads.record(sampleCount: samples.count, languageCode: nil, keyterms: [])
+            return GrokSTTRESTTranscript(text: "part\(index)", words: [
+                ASRWordTiming(text: "w\(index)", start: 1, end: 2),
+                // xAI may report a word slightly past the end of what was sent.
+                ASRWordTiming(text: "late\(index)", start: 4.5, end: 9),
+            ])
+        }
+        session.maxRequestSamples = 5 * 16_000
+        let output = try await session.transcribeWithTimings([Float](repeating: 0, count: 8 * 16_000))
+
+        XCTAssertEqual(uploads.all.map(\.sampleCount), [80_000, 48_000])
+        XCTAssertEqual(output.result.text, "part1 part2")
+        XCTAssertEqual(output.words.map(\.text), ["w1", "late1", "w2", "late2"])
+        XCTAssertEqual(output.words.map(\.start), [1, 4.5, 6, 8])
+        XCTAssertEqual(output.words.map(\.end), [2, 5, 7, 8])
+    }
+
+    func testSessionTreatsSilenceAsEmptyAndRetriesWhatWaitingCanFix() async throws {
+        let failures = GrokMeetingUploadFailures()
+        var calls = 0
+        var waits: [Int] = []
+        var session = self.makeASRSession(failures: failures) { _, _, _ in
+            calls += 1
+            switch calls {
+            case 1: throw GrokSTTError.emptyTranscript
+            case 2: throw GrokSTTError.timeout
+            default: return GrokSTTRESTTranscript(text: "recovered", words: [])
+            }
+        }
+        session.retryDelay = { waits.append($0) }
+
+        let silence = try await session.transcribeWithTimings([Float](repeating: 0, count: 16_000))
+        XCTAssertEqual(silence.result.text, "")
+        XCTAssertTrue(silence.words.isEmpty)
+
+        let retried = try await session.transcribeWithTimings([Float](repeating: 0, count: 16_000))
+        XCTAssertEqual(retried.result.text, "recovered")
+        XCTAssertEqual(waits, [1])
+        XCTAssertNil(failures.first, "A request that succeeded on retry is not a failure")
+    }
+
+    func testSessionRecordsALostAttemptAndStopsUploading() async {
+        let failures = GrokMeetingUploadFailures()
+        var calls = 0
+        var session = self.makeASRSession(failures: failures) { _, _, _ in
+            calls += 1
+            throw GrokSTTError.offline
+        }
+        session.retryDelay = { _ in }
+
+        for _ in 0..<2 {
+            do {
+                _ = try await session.transcribeWithTimings([Float](repeating: 0, count: 16_000))
+                XCTFail("Expected the upload failure")
+            } catch {
+                XCTAssertEqual(error as? GrokSTTError, .offline)
+            }
+        }
+        XCTAssertEqual(calls, GrokMeetingASRSession.attempts, "Retried within the first request, then never again")
+        XCTAssertEqual(failures.first, .offline)
+    }
+
+    func testRESTClientReadsWordTimingsAndDropsUnusableOnes() async throws {
+        let http = FakeGrokSTTHTTPClient()
+        http.enqueue(status: 200, json: [
+            "text": "The balance is $167.",
+            "duration": 3.45,
+            "words": [
+                ["text": "The", "start": 0.24, "end": 0.48],
+                ["text": "balance", "start": 0.48, "end": 0.96],
+                ["text": " ", "start": 1.0, "end": 1.1],
+                ["text": "backwards", "start": 2.0, "end": 1.0],
+                ["text": "untimed"],
+                ["text": "$167.", "start": 1.12, "end": 3.2, "speaker": 0],
+            ],
+        ])
+        let client = GrokSTTRESTClient(resolver: RecordingGrokSTTResolver(), http: http)
+        let transcript = try await client.transcribePCMWithWords(
+            [Float](repeating: 0.1, count: 1_600),
+            languageCode: "en",
+            keyterms: [],
+            timeout: 30
+        )
+        XCTAssertEqual(transcript.text, "The balance is $167.")
+        XCTAssertEqual(transcript.words.map(\.text), ["The", "balance", "$167."])
+        XCTAssertEqual(transcript.words.map(\.start), [0.24, 0.48, 1.12])
+
+        // A transcript without a `words` array is still a transcript.
+        http.enqueue(status: 200, json: ["text": "no timings"])
+        let untimed = try await client.transcribePCMWithWords([Float](repeating: 0.1, count: 1_600), languageCode: "en", timeout: 30)
+        XCTAssertEqual(untimed.text, "no timings")
+        XCTAssertTrue(untimed.words.isEmpty)
+    }
+
+    // MARK: Fixtures
+
+    private final class Uploads: @unchecked Sendable {
+        struct Upload {
+            let sampleCount: Int
+            let languageCode: String?
+            let keyterms: [String]
+        }
+
+        private let lock = NSLock()
+        private var uploads: [Upload] = []
+        var all: [Upload] { self.lock.withLock { self.uploads } }
+
+        @discardableResult
+        func record(sampleCount: Int, languageCode: String?, keyterms: [String]) -> Int {
+            self.lock.withLock {
+                self.uploads.append(Upload(sampleCount: sampleCount, languageCode: languageCode, keyterms: keyterms))
+                return self.uploads.count
+            }
+        }
+    }
+
+    private func makeASRSession(
+        failures: GrokMeetingUploadFailures = GrokMeetingUploadFailures(),
+        transcriber: @escaping GrokMeetingASRSession.Transcriber
+    ) -> GrokMeetingASRSession {
+        GrokMeetingASRSession(languageCode: "en", keyterms: [], transcriber: transcriber, failures: failures)
+    }
+
+    private func makeBackend(
+        local: FakeLocalRuntime,
+        locator: any MeetingNemotronModelLocating = StubLocator(),
+        transcriber: @escaping GrokMeetingASRSession.Transcriber
+    ) -> GrokMeetingNemotronBackend {
+        GrokMeetingNemotronBackend(
+            localRuntimeFactory: { _ in local },
+            modelLocator: locator,
+            materializer: FakeMaterializer(),
+            transcriber: transcriber,
+            keyterms: { ["FluidVoice"] }
+        )
+    }
+
+    private func makeRequest(session: MeetingSession, languageCode: String = "en") -> MeetingBackendRequest {
+        MeetingBackendRequest(
+            attemptID: UUID(),
+            session: session,
+            sessionDirectory: FileManager.default.temporaryDirectory,
+            configuration: MeetingFinalProcessingConfiguration(languageCode: languageCode)
+        )
+    }
+
+    private func makeChunk(sequence: Int = 0, start: Double, end: Double) -> MeetingAudioChunk {
+        MeetingAudioChunk(
+            id: UUID(),
+            sequence: sequence,
+            relativeFilePath: "tracks/microphone/chunk_\(sequence).caf",
+            presentationStart: MeetingMediaTime(value: Int64((start * 1000).rounded()), timescale: 1000),
+            presentationEnd: MeetingMediaTime(value: Int64((end * 1000).rounded()), timescale: 1000),
+            discontinuities: [],
+            sha256: String(repeating: "a", count: 64),
+            byteCount: 1024,
+            finalizationState: .finalized
+        )
+    }
+
+    private func makeObserved(_ chunk: MeetingAudioChunk, duration: Double) -> MeetingChunkObservationResult {
+        .observed(MeetingChunkObservedAudio(
+            byteCount: chunk.byteCount,
+            sha256: chunk.sha256,
+            decoded: MeetingChunkDecodedFacts(
+                sampleRate: 16_000,
+                channelCount: 1,
+                frameCount: Int64((duration * 16_000).rounded()),
+                durationSeconds: duration,
+                codecPriming: .measuredFrames(0),
+                processingFormatDescription: "fixture"
+            )
+        ))
+    }
+
+    private func makeMicTrack(chunks: [MeetingAudioChunk]) -> MeetingAudioTrack {
+        let timebase = MeetingTimebaseMetadata(startedHostTime: 7, machTimebaseNumerator: 1, machTimebaseDenominator: 1, firstPresentationTime: nil)
+        return MeetingAudioTrack(
+            id: UUID(),
+            kind: .microphone,
+            sourceIdentifier: "microphone",
+            sourceDisplayName: "microphone",
+            format: nil,
+            timebase: timebase,
+            health: .waiting,
+            chunks: chunks,
+            captureMethod: .voiceProcessing,
+            captureEras: [MeetingCaptureEra(
+                method: .voiceProcessing,
+                deviceUID: "mic-a",
+                deviceName: "mic-a",
+                roleAtElection: .unknown,
+                echoProtection: .voiceProcessed,
+                startSeconds: 100
+            )]
+        )
+    }
+
+    private func makeSession(tracks: [MeetingAudioTrack], languageCode: String = "en") -> MeetingSession {
+        let timebase = MeetingTimebaseMetadata(startedHostTime: 7, machTimebaseNumerator: 1, machTimebaseDenominator: 1, firstPresentationTime: nil)
+        var session = MeetingSession(
+            configuration: MeetingCaptureConfiguration(
+                mode: .inRoom,
+                title: "Grok canonical fixture",
+                languageCode: languageCode,
+                microphone: MeetingMicrophoneIdentity(captureDeviceID: "mic-a", displayName: "Mic")
+            ),
+            timebase: timebase
+        )
+        session.audioTracks = tracks
+        return session
+    }
+
+    private struct FixtureObserver: MeetingChunkAudioObserving {
+        let results: [MeetingAnalysisChunkKey: MeetingChunkObservationResult]
+
+        func observe(chunk: MeetingAudioChunk, trackID: MeetingAudioTrackID) -> MeetingChunkObservationResult {
+            self.results[MeetingAnalysisChunkKey(trackID: trackID, chunkID: chunk.id)] ?? .failed(.unreadable, detail: "no fixture observation")
+        }
+    }
+}
+
+/// The local runtime as the Grok backend may use it: speaker detection and voice matching.
+private final nonisolated class FakeLocalRuntime: MeetingParakeetNemotronRunning, @unchecked Sendable {
+    final nonisolated class Diarizer: MeetingNemotronDiarizerFactory, @unchecked Sendable {
+        struct Session: MeetingNemotronDiarizerSession {
+            let segments: [MeetingNemotronSpeakerSegment]
+            func diarize(samples _: [Float]) async throws -> [MeetingNemotronSpeakerSegment] { self.segments }
+        }
+
+        var segmentsByEpoch: [MeetingAnalysisEpochID: [MeetingNemotronSpeakerSegment]] = [:]
+
+        func makeDiarizer(epoch: MeetingAnalysisEpochID) async throws -> any MeetingNemotronDiarizerSession {
+            Session(segments: self.segmentsByEpoch[epoch] ?? [])
+        }
+    }
+
+    let diarizer = Diarizer()
+    private(set) var diarizationScopes = 0
+    private(set) var localASRScopes = 0
+
+    func withNemotronDiarization(
+        artifact _: MeetingNemotronModelArtifact,
+        _ body: nonisolated(nonsending) @escaping @Sendable (any MeetingNemotronDiarizerFactory) async throws -> MeetingNemotronPhaseResult
+    ) async throws -> MeetingNemotronPhaseResult {
+        self.diarizationScopes += 1
+        return try await body(self.diarizer)
+    }
+
+    func withPreparedASR(
+        attemptID _: UUID,
+        configuration _: MeetingFinalProcessingConfiguration,
+        body _: nonisolated(nonsending) @escaping @Sendable (any MeetingParakeetASRSession) async throws -> MeetingParakeetPhaseResult
+    ) async throws -> MeetingParakeetPhaseResult {
+        self.localASRScopes += 1
+        throw MeetingProcessingError.noRecoverableAudio
+    }
+}
+
+private final nonisolated class FakeMaterializer: MeetingEpochAudioMaterializing, @unchecked Sendable {
+    func materialize(
+        epoch: MeetingAnalysisEpochRecord,
+        track: MeetingAnalysisTrackManifest,
+        manifest _: MeetingAnalysisManifest,
+        sessionDirectory _: URL
+    ) async throws -> MeetingMaterializedEpoch {
+        var cursor = 0
+        var ranges: [MeetingMaterializedSpanSamples] = []
+        for spanID in epoch.spanIDs {
+            guard let span = track.spans.first(where: { $0.id == spanID }) else { continue }
+            let count = max(1, Int((span.analysisInterval.duration * 16_000).rounded()))
+            ranges.append(MeetingMaterializedSpanSamples(spanID: spanID, sampleRange: cursor..<(cursor + count)))
+            cursor += count
+        }
+        return MeetingMaterializedEpoch(
+            epochID: epoch.id,
+            samples: [Float](repeating: 0, count: cursor),
+            sampleRate: 16_000,
+            spanSamples: ranges
+        )
+    }
+}
+
+private final nonisolated class StubLocator: MeetingNemotronModelLocating, @unchecked Sendable {
+    private let error: (any Error)?
+    private let artifact = MeetingNemotronModelArtifact(
+        packageURL: URL(fileURLWithPath: "/tmp/stub-nemotron.mlpackage"),
+        totalByteCount: 1,
+        fileCount: 1,
+        manifestSHA256: "stub",
+        entryMetadataSHA256: "stub"
+    )
+
+    init(error: (any Error)? = nil) {
+        self.error = error
+    }
+
+    func locate() throws -> MeetingNemotronModelArtifact {
+        if let error { throw error }
+        return self.artifact
+    }
+
+    func recheck(_ artifact: MeetingNemotronModelArtifact) throws -> MeetingNemotronModelArtifact {
+        if let error { throw error }
+        return artifact
+    }
+}
