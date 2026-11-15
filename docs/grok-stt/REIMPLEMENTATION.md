@@ -36,6 +36,7 @@ Everything else lives in new files under `Sources/Fluid/Services/GrokSTT/`,
   `recordingSessionDidCancel` in `stopWithoutTranscription`).
 - `SpeechModelInstallationSnapshot.swift`: Grok counts as built in.
 - `Meeting/MeetingProcessingPipeline.swift`: selects the Grok backend while Grok is the engine, and `MeetingProviderLanguagePin` gets a `.grok` case.
+- `Meeting/MeetingProcessingConfiguration.swift`: `MeetingRetranscriptionLanguage` asks the Grok backend which redo languages it accepts.
 - `Meeting/Backend/MeetingTranscriptionBackendRegistry.swift`: registers the Grok backend (one line). `MeetingTranscriptionBackendTests` expects it in the default registry.
 - `AISettingsView.swift`, `VoiceEngineSettingsViewModel.swift`, `AISettingsView+SpeechRecognition.swift`:
   the xAI filter chip, the credentials panel, the language menu, gating of the Activate button, and
@@ -78,9 +79,11 @@ To add Grok captions:
 
 - Send a retried dictation back through ContentView's normal completion (AI cleanup, history, Edit and Command routing). This needs a small upstream hook in ContentView. Until then, a retry only offers the text for copying.
 - Move the Grok meeting backend to the canonical-evidence contract (word timings, receipts) once Grok returns word timestamps.
-- Offer Grok's languages when a finished meeting is transcribed again. Upstream's
-  `MeetingRetranscriptionLanguage` lists Parakeet's languages only, so with Grok selected a redo can
-  only pick a language both engines share.
+- Offer all of Grok's languages for meetings. Upstream's meeting language lists hold Parakeet's
+  languages only. While Grok is selected, Redo transcript offers the ones both engines share
+  (`GrokMeetingTranscriptionBackend.acceptsRedoLanguage`). The meeting setup sheet is not filtered
+  yet: a new meeting set to a language Grok lacks records fine, then fails final transcription
+  until a local engine is selected.
 - Add Grok to `VoiceEngineLanguageCatalog` and onboarding. Onboarding still never suggests a cloud
   engine, on purpose.
 - Add `grokSTTAuthMode`, `grokCLIBinaryPath` and `selectedGrokSTTLanguageCode` to settings backup.

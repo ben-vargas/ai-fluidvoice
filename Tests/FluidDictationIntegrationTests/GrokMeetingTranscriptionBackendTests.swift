@@ -48,6 +48,27 @@ final class GrokMeetingTranscriptionBackendTests: XCTestCase {
         XCTAssertTrue(backend is GrokMeetingTranscriptionBackend)
     }
 
+    func testRedoOffersOnlyLanguagesGrokAcceptsWhileGrokIsSelected() {
+        let settings = SettingsStore.shared
+        let previous = settings.selectedSpeechModel
+        defer { settings.selectedSpeechModel = previous }
+
+        settings.selectedSpeechModel = .grokSTT
+        let grokChoices = Set(MeetingRetranscriptionLanguage.choices.map(\.id))
+        XCTAssertFalse(grokChoices.isEmpty)
+        XCTAssertTrue(grokChoices.isSubset(of: Set(GrokSTTLanguage.codes)))
+        XCTAssertTrue(grokChoices.isSuperset(of: ["en", "de", "nl"]))
+        XCTAssertNil(MeetingRetranscriptionLanguage.canonicalCode("uk"))
+        XCTAssertEqual(MeetingRetranscriptionLanguage.canonicalCode("de"), "de")
+        XCTAssertFalse(MeetingRetranscriptionLanguage.canRetranscribe(selection: "uk", currentLanguageCode: "en"))
+        // A meeting already transcribed in a language Grok lacks still shows its name.
+        XCTAssertEqual(MeetingRetranscriptionLanguage.displayName(for: "uk"), "Ukrainian")
+
+        settings.selectedSpeechModel = .parakeetTDT
+        XCTAssertEqual(MeetingRetranscriptionLanguage.canonicalCode("uk"), "uk")
+        XCTAssertTrue(MeetingRetranscriptionLanguage.choices.contains { $0.id == "uk" })
+    }
+
     // MARK: - Fixtures
 
     private func makeRequest(languageCode: String) -> MeetingBackendRequest {

@@ -90,16 +90,22 @@ nonisolated struct MeetingFinalProcessingConfiguration: Equatable, Sendable {
 enum MeetingRetranscriptionLanguage {
     static func canonicalCode(_ raw: String) -> String? {
         let code = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard VoiceEngineLanguageCatalog.parakeetV3LanguageIDs.contains(code) else { return nil }
+        guard VoiceEngineLanguageCatalog.parakeetV3LanguageIDs.contains(code),
+              GrokMeetingTranscriptionBackend.acceptsRedoLanguage(code)
+        else { return nil }
         return code
     }
 
     static var choices: [VoiceEngineLanguage] {
+        self.allLanguages.filter { GrokMeetingTranscriptionBackend.acceptsRedoLanguage($0.id) }
+    }
+
+    private static var allLanguages: [VoiceEngineLanguage] {
         VoiceEngineLanguageCatalog.allLanguages(availableModels: [.parakeetTDT])
     }
 
     static func displayName(for languageCode: String) -> String {
-        self.choices.first { $0.id == languageCode }?.displayName ?? languageCode
+        self.allLanguages.first { $0.id == languageCode }?.displayName ?? languageCode
     }
 
     /// Explicit redo can refresh saved replacements in the same language. Recovery suggestions

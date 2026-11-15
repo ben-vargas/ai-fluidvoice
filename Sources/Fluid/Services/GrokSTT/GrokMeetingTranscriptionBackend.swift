@@ -31,6 +31,13 @@ final class GrokMeetingTranscriptionBackend: MeetingTranscriptionBackend {
         Self.descriptor
     }
 
+    /// While Grok is the selected engine a redo runs on this backend, so the redo dialog must
+    /// only offer languages `plan` accepts. Any other engine leaves upstream's choices alone.
+    static func acceptsRedoLanguage(_ languageCode: String) -> Bool {
+        guard SettingsStore.shared.selectedSpeechModel == .grokSTT else { return true }
+        return GrokSTTLanguage.normalized(languageCode) != nil
+    }
+
     private let legacyExecutor: MeetingLegacyBackendExecutor
 
     init(legacyExecutor: @escaping MeetingLegacyBackendExecutor) {
