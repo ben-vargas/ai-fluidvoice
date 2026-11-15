@@ -25,29 +25,13 @@ final class GrokSTTRetryCenter {
         var isPlainDictation = false
     }
 
-    /// What a recovered dictation may still do once its cleanup has finished.
-    enum DeliveryDecision: Equatable {
-        /// Type it: the field from the Retry click still has focus.
-        case type
-        /// Keep it in history without typing, because the destination is gone.
-        case keepWithoutTyping
-        /// A newer recording owns the app now. Do nothing more, not even UI cleanup.
-        case abandon
-    }
-
-    /// Asked with the final text, and safe to ask repeatedly: before typing, as the validity
-    /// check of every step of typing, and again before the overlay is torn down.
-    typealias DeliveryCheck = @MainActor (String) -> DeliveryDecision
-
     /// Finishes a recovered dictation through ContentView's reprocess path. ContentView installs it.
-    var deliverRecoveredDictation: (@MainActor (String, @escaping DeliveryCheck) async -> Void)?
+    var deliverRecoveredDictation: (@MainActor (String, GrokSTTRecoveredDelivery) async -> Void)?
 
     /// Text currently offered with a Copy button.
     private(set) var recoveredTextForCopy: String?
     /// The delivery in progress. Only a new recording takes it away.
     private var activeDeliveryID: UUID?
-    /// The active delivery's field lost focus, so its text is offered for copying instead.
-    private var activeDeliveryLostFocus = false
 
     private(set) var pending: Pending?
     private var expiryTask: Task<Void, Never>?
@@ -203,30 +187,22 @@ final class GrokSTTRetryCenter {
         }
         GrokSTTLog.info("retry_recovered delivering as dictation")
         self.clear()
-        let delivery = UUID()
-        self.activeDeliveryID = delivery
-        self.activeDeliveryLostFocus = false
+        let id = UUID()
+        self.activeDeliveryID = id
+        let delivery = GrokSTTRecoveredDelivery(
+            isCurrent: { [weak self] in self?.activeDeliveryID == id },
+            isFieldFocused: { [isFocusActive] in focus.map(isFocusActive) ?? false },
+            onLostFocus: { [weak self] finalText in
+                GrokSTTLog.info("retry_recovered not typed: the field from the Retry click lost focus")
+                self?.offerForCopy(finalText)
+            }
+        )
         Task { @MainActor [weak self] in
             // A recording may have started since the upload finished.
-            guard self?.activeDeliveryID == delivery else { return }
-            await deliver(cleaned) { [weak self] finalText in
-                self?.decideDelivery(delivery, focus: focus, finalText: finalText) ?? .abandon
-            }
-            if self?.activeDeliveryID == delivery { self?.activeDeliveryID = nil }
+            guard self?.activeDeliveryID == id else { return }
+            await deliver(cleaned, delivery)
+            if self?.activeDeliveryID == id { self?.activeDeliveryID = nil }
         }
-    }
-
-    /// The delivery stays `.type` only while it is still the active one and the field from the
-    /// Retry click still has focus. Once that field loses focus the text is offered for copying,
-    /// and the answer stays `.keepWithoutTyping` even if focus comes back.
-    private func decideDelivery(_ delivery: UUID, focus: TypingService.CapturedFocusTarget?, finalText: String) -> DeliveryDecision {
-        guard self.activeDeliveryID == delivery else { return .abandon }
-        if self.activeDeliveryLostFocus { return .keepWithoutTyping }
-        if let focus, self.isFocusActive(focus) { return .type }
-        GrokSTTLog.info("retry_recovered not typed: the field from the Retry click lost focus")
-        self.activeDeliveryLostFocus = true
-        self.offerForCopy(finalText)
-        return .keepWithoutTyping
     }
 
     /// Shows recovered text with a Copy button. Also used when a delivery cannot start.
@@ -447,5 +423,78 @@ private struct GrokSTTFailureView: View {
     private var footnote: String {
         if self.isRecovered { return "Copy it, then paste where you need it." }
         return self.state.canRetry ? "Your recording is kept for 15 minutes." : "Fix this in Voice Engine settings, then dictate again."
+    }
+}
+
+// MARK: - Delivery
+
+/// What a recovered dictation is still allowed to do while ContentView's reprocess path finishes
+/// it. Reprocess asks before typing, hands `allowsOutput` to every step of upstream's paste
+/// pipeline, and asks `isSuperseded` before it tears its overlay down.
+///
+/// Before the paste command goes out, output is allowed only while nothing has taken over and the
+/// field from the Retry click still has focus. After it has gone out, output stays allowed: upstream
+/// settles the clipboard and verifies the paste later, and those steps must see it as valid.
+@MainActor
+final class GrokSTTRecoveredDelivery {
+    enum Decision: Equatable {
+        /// Type it: the field from the Retry click still has focus.
+        case type
+        /// Keep it in history without typing, because the destination is gone or Escape was pressed.
+        case keepWithoutTyping
+        /// A newer recording owns the app now. Do nothing more, not even UI cleanup.
+        case abandon
+    }
+
+    private let isCurrent: () -> Bool
+    private let isFieldFocused: () -> Bool
+    private let onLostFocus: (String) -> Void
+    private var appSuperseded: () -> Bool = { false }
+    private var appCancelled: () -> Bool = { false }
+    private var lostFocus = false
+    private(set) var hasTyped = false
+
+    init(isCurrent: @escaping () -> Bool, isFieldFocused: @escaping () -> Bool, onLostFocus: @escaping (String) -> Void) {
+        self.isCurrent = isCurrent
+        self.isFieldFocused = isFieldFocused
+        self.onLostFocus = onLostFocus
+    }
+
+    /// For reprocess's own callers, which have nothing to check: always type.
+    static var unrestricted: GrokSTTRecoveredDelivery {
+        GrokSTTRecoveredDelivery(isCurrent: { true }, isFieldFocused: { true }, onLostFocus: { _ in })
+    }
+
+    /// ContentView adds what only it can see: a newer recording's overlay, and Escape.
+    func restricted(supersededWhen superseded: @escaping () -> Bool, cancelledWhen cancelled: @escaping () -> Bool) -> GrokSTTRecoveredDelivery {
+        self.appSuperseded = superseded
+        self.appCancelled = cancelled
+        return self
+    }
+
+    /// A newer recording took over. Reprocess then leaves the overlay and mode to that recording.
+    var isSuperseded: Bool {
+        !self.isCurrent() || self.appSuperseded()
+    }
+
+    /// Safe to ask repeatedly. Once the field has lost focus the text is offered for copying and
+    /// the answer stays `.keepWithoutTyping`, even if focus comes back.
+    func decision(for finalText: String) -> Decision {
+        if self.isSuperseded { return .abandon }
+        if self.lostFocus || self.appCancelled() { return .keepWithoutTyping }
+        if self.isFieldFocused() { return .type }
+        self.lostFocus = true
+        self.onLostFocus(finalText)
+        return .keepWithoutTyping
+    }
+
+    /// The `isOutputValid` of upstream's focus-restore and paste steps.
+    func allowsOutput(_ finalText: String) -> Bool {
+        self.hasTyped || self.decision(for: finalText) == .type
+    }
+
+    /// Reprocess reports that the paste command went out.
+    func didType() {
+        self.hasTyped = true
     }
 }

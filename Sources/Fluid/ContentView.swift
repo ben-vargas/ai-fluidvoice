@@ -4429,8 +4429,9 @@ struct ContentView: View {
 
     private func reprocessDictationText(
         _ transcribedText: String,
-        delivery: @escaping GrokSTTRetryCenter.DeliveryCheck = { _ in .type }
+        delivery recoveredDelivery: GrokSTTRecoveredDelivery? = nil
     ) async {
+        let delivery = recoveredDelivery ?? .unrestricted
         // If live recording is still active, stop it first so reprocess does not
         // leave ASR running in the background (which causes the next hotkey press
         // to behave like a stop instead of start).
@@ -4536,9 +4537,9 @@ struct ContentView: View {
             self.pendingAIReprocessText = nil
         }
 
-        let deliveryDecision = delivery(finalText)
+        let deliveryDecision = delivery.decision(for: finalText)
         if deliveryDecision == .abandon { return }
-        let isOutputValid: @MainActor () -> Bool = { delivery(finalText) == .type }
+        let isOutputValid: @MainActor () -> Bool = { delivery.allowsOutput(finalText) }
 
         let targetContext = TypingService.captureRecordingTargetContext()
         NotchContentState.shared.recordingTargetContext = targetContext
@@ -4567,10 +4568,11 @@ struct ContentView: View {
                 self.showTextDeliveryFailure(failure, transcript: finalText)
                 return
             }
+            if result == .commandPosted { delivery.didType() }
         } else {
             await PasteDeliveryCoordinator.shared.copyBackup(finalText, enabled: SettingsStore.shared.copyTranscriptionToClipboard)
         }
-        if delivery(finalText) == .abandon { return }
+        if delivery.isSuperseded { return }
 
         NotchOverlayManager.shared.updateTranscriptionText("")
         if shouldShowAIProcessingFailure {
@@ -5159,15 +5161,15 @@ struct ContentView: View {
         NotchContentState.shared.onReprocessLastRequested = {
             self.reprocessLastDictation()
         }
-        GrokSTTRetryCenter.shared.deliverRecoveredDictation = { text, check in
+        GrokSTTRetryCenter.shared.deliverRecoveredDictation = { text, delivery in
             // Reprocess stops a running capture, so it must never start under one.
             guard !self.asr.isRunningOrStarting else { return GrokSTTRetryCenter.shared.offerForCopy(text) }
             let lifecycle = self.overlayLifecycleID
-            await self.reprocessDictationText(text) { finalText in
-                // A newer recording owns the overlay; Escape cleared the mode this reprocess set.
-                guard self.overlayLifecycleID == lifecycle else { return .abandon }
-                return self.activeRecordingMode == .dictate ? check(finalText) : .keepWithoutTyping
-            }
+            await self.reprocessDictationText(text, delivery: delivery.restricted(
+                supersededWhen: { self.overlayLifecycleID != lifecycle },
+                // Escape clears the mode this reprocess sets.
+                cancelledWhen: { self.activeRecordingMode != .dictate }
+            ))
         }
         NotchContentState.shared.onCopyLastRequested = {
             self.copyLastDictationFromHistory()

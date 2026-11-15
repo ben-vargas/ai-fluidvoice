@@ -296,33 +296,57 @@ final class GrokSTTRetryCenterTests: XCTestCase {
     private let samples = [Float](repeating: 0.1, count: 1600)
     private let field = TypingService.CapturedFocusTarget(pid: 1, window: nil, element: AXUIElementCreateSystemWide())
 
-    /// What ContentView's reprocess path does with a recovered dictation, reduced to what the
-    /// retry center controls: the text it hands over and the answers it gives. Reprocess asks
-    /// three times: before typing, as the validity check while pasting, and before teardown.
+    /// ContentView's reprocess path, reduced to how it uses a delivery: one decision before
+    /// typing, `allowsOutput` as the validity check while the paste is prepared, `didType` when
+    /// the paste command is out, `isSuperseded` before teardown, and then upstream's delayed
+    /// clipboard settlement, which asks `allowsOutput` again after reprocess has returned.
     @MainActor
     private final class Reprocess {
         var texts: [String] = []
-        var decisions: [GrokSTTRetryCenter.DeliveryDecision] = []
-        /// Runs between "cleanup finished" and "about to type".
+        var steps: [String] = []
+        private(set) var delivery: GrokSTTRecoveredDelivery?
+        /// What ContentView adds: a newer recording's overlay, and Escape.
+        var newerOverlay = false
+        var escapePressed = false
         var beforeTyping: () -> Void = {}
-        /// Runs while the paste is waiting on Accessibility or the clipboard.
         var whilePasting: () -> Void = {}
-        /// Runs after the paste, before the overlay is torn down.
         var beforeTeardown: () -> Void = {}
 
         func install(on center: GrokSTTRetryCenter) {
-            center.deliverRecoveredDictation = { text, check in
+            center.deliverRecoveredDictation = { text, delivery in
                 self.texts.append(text)
                 let final = text + " (cleaned)"
+                let delivery = delivery.restricted(
+                    supersededWhen: { self.newerOverlay },
+                    cancelledWhen: { self.escapePressed }
+                )
+                self.delivery = delivery
                 await Task.yield()
                 self.beforeTyping()
-                self.decisions.append(check(final))
-                await Task.yield()
-                self.whilePasting()
-                self.decisions.append(check(final))
+                let decision = delivery.decision(for: final)
+                self.steps.append("decision:\(decision)")
+                if decision == .abandon { return }
+                if decision == .type {
+                    await Task.yield()
+                    self.whilePasting()
+                    if delivery.allowsOutput(final) {
+                        delivery.didType()
+                        self.steps.append("pasted")
+                    } else {
+                        self.steps.append("paste declined")
+                    }
+                }
                 self.beforeTeardown()
-                self.decisions.append(check(final))
+                if delivery.isSuperseded { return self.steps.append("no teardown") }
+                // Teardown clears the recording mode, exactly as Escape would.
+                self.escapePressed = true
+                self.steps.append("teardown")
             }
+        }
+
+        /// Upstream settles the clipboard and verifies the paste after reprocess has returned.
+        var settlementSeesValidOutput: Bool {
+            self.delivery?.allowsOutput("") ?? false
         }
     }
 
@@ -360,10 +384,42 @@ final class GrokSTTRetryCenterTests: XCTestCase {
         await self.retryAndSettle(center)
 
         XCTAssertEqual(reprocess.texts.map { $0.lowercased() }, ["hello world"])
-        XCTAssertEqual(reprocess.decisions, [.type, .type, .type], "Asking does not use the delivery up")
+        XCTAssertEqual(reprocess.steps, ["decision:type", "pasted", "teardown"])
         XCTAssertNil(center.pending)
         XCTAssertNil(center.recoveredTextForCopy)
         XCTAssertFalse(center.isRetrying)
+    }
+
+    func testAPastedDeliveryStaysValidForClipboardSettlementAfterReprocessReturns() async {
+        var focused = true
+        let reprocess = Reprocess()
+        let center = self.makeCenter(stillFocused: { focused })
+        reprocess.install(on: center)
+
+        self.failOrdinaryDictation(on: center)
+        await self.retryAndSettle(center)
+        XCTAssertEqual(reprocess.steps, ["decision:type", "pasted", "teardown"])
+
+        // By now reprocess has cleared the recording mode and the retry center has let go of the
+        // delivery. The user moves on, and even starts the next recording.
+        focused = false
+        XCTAssertTrue(reprocess.settlementSeesValidOutput, "The clipboard backup and paste check still apply")
+        center.recordingWillStart()
+        reprocess.newerOverlay = true
+        XCTAssertTrue(reprocess.settlementSeesValidOutput)
+        XCTAssertNil(center.recoveredTextForCopy, "A pasted delivery is never offered for copying afterwards")
+    }
+
+    func testADeliveryThatWasNotPastedIsNotValidForSettlement() async {
+        let reprocess = Reprocess()
+        let center = self.makeCenter(focusedAtClick: false)
+        reprocess.install(on: center)
+
+        self.failOrdinaryDictation(on: center)
+        await self.retryAndSettle(center)
+
+        XCTAssertEqual(reprocess.steps, ["decision:keepWithoutTyping", "teardown"])
+        XCTAssertFalse(reprocess.settlementSeesValidOutput)
     }
 
     func testOnlyAnOrdinaryUncancelledDictationIsEverMarked() {
@@ -412,7 +468,7 @@ final class GrokSTTRetryCenterTests: XCTestCase {
         self.failOrdinaryDictation(on: center)
         await self.retryAndSettle(center)
 
-        XCTAssertEqual(reprocess.decisions, [.keepWithoutTyping, .keepWithoutTyping, .keepWithoutTyping])
+        XCTAssertEqual(reprocess.steps, ["decision:keepWithoutTyping", "teardown"])
         XCTAssertEqual(center.recoveredTextForCopy?.lowercased(), "hello world (cleaned)")
     }
 
@@ -428,23 +484,37 @@ final class GrokSTTRetryCenterTests: XCTestCase {
         self.failOrdinaryDictation(on: center)
         await self.retryAndSettle(center)
 
-        XCTAssertEqual(reprocess.decisions, [.type, .keepWithoutTyping, .keepWithoutTyping])
+        XCTAssertEqual(reprocess.steps, ["decision:type", "paste declined", "teardown"])
         XCTAssertEqual(center.recoveredTextForCopy?.lowercased(), "hello world (cleaned)")
+        XCTAssertFalse(reprocess.settlementSeesValidOutput)
     }
 
-    func testDismissingTheCopyOfferDoesNotAbandonTheOverlayTeardown() async {
-        var focused = true
+    func testEscapeDuringCleanupKeepsTheTextInHistoryWithoutTyping() async {
         let reprocess = Reprocess()
-        let center = self.makeCenter(stillFocused: { focused })
-        reprocess.beforeTyping = { focused = false }
-        // The user dismisses the Copy panel while reprocess is still finishing.
-        reprocess.whilePasting = { center.clear() }
+        reprocess.beforeTyping = { reprocess.escapePressed = true }
+        let center = self.makeCenter()
         reprocess.install(on: center)
 
         self.failOrdinaryDictation(on: center)
         await self.retryAndSettle(center)
 
-        XCTAssertEqual(reprocess.decisions, [.keepWithoutTyping, .keepWithoutTyping, .keepWithoutTyping])
+        XCTAssertEqual(reprocess.steps, ["decision:keepWithoutTyping", "teardown"])
+        XCTAssertNil(center.recoveredTextForCopy)
+    }
+
+    func testDismissingTheCopyOfferDoesNotStrandTheOverlay() async {
+        var focused = true
+        let reprocess = Reprocess()
+        let center = self.makeCenter(stillFocused: { focused })
+        reprocess.beforeTyping = { focused = false }
+        // The user dismisses the Copy panel while reprocess is still finishing.
+        reprocess.beforeTeardown = { center.clear() }
+        reprocess.install(on: center)
+
+        self.failOrdinaryDictation(on: center)
+        await self.retryAndSettle(center)
+
+        XCTAssertEqual(reprocess.steps, ["decision:keepWithoutTyping", "teardown"])
         XCTAssertNil(center.recoveredTextForCopy)
     }
 
@@ -456,7 +526,8 @@ final class GrokSTTRetryCenterTests: XCTestCase {
         self.failOrdinaryDictation(on: center)
         await self.retryAndSettle(center)
 
-        XCTAssertEqual(reprocess.decisions, [.keepWithoutTyping, .keepWithoutTyping, .keepWithoutTyping])
+        XCTAssertEqual(reprocess.steps, ["decision:keepWithoutTyping", "teardown"])
+        XCTAssertEqual(center.recoveredTextForCopy?.lowercased(), "hello world (cleaned)")
     }
 
     func testANewRecordingDuringCleanupAbandonsTheDelivery() async {
@@ -469,20 +540,23 @@ final class GrokSTTRetryCenterTests: XCTestCase {
         self.failOrdinaryDictation(on: center)
         await self.retryAndSettle(center)
 
-        XCTAssertEqual(reprocess.decisions, [.abandon, .abandon, .abandon])
+        XCTAssertEqual(reprocess.steps, ["decision:abandon"])
         XCTAssertNil(center.recoveredTextForCopy)
     }
 
-    func testANewRecordingWhilePastingAbandonsTheRest() async {
+    func testANewRecordingWhilePastingDeclinesThePasteAndLeavesItsOverlayAlone() async {
         let reprocess = Reprocess()
         let center = self.makeCenter()
-        reprocess.whilePasting = { center.recordingWillStart() }
+        reprocess.whilePasting = {
+            center.recordingWillStart()
+            reprocess.newerOverlay = true
+        }
         reprocess.install(on: center)
 
         self.failOrdinaryDictation(on: center)
         await self.retryAndSettle(center)
 
-        XCTAssertEqual(reprocess.decisions, [.type, .abandon, .abandon])
+        XCTAssertEqual(reprocess.steps, ["decision:type", "paste declined", "no teardown"])
     }
 
     func testARecordingThatStartsAsTheUploadFinishesKeepsReprocessFromStarting() async {
@@ -538,7 +612,7 @@ final class GrokSTTRetryCenterTests: XCTestCase {
         XCTAssertEqual(center.pending?.isPlainDictation, true, "A failed retry keeps the recording and its mark")
         await self.retryAndSettle(center)
         XCTAssertEqual(reprocess.texts.map { $0.lowercased() }, ["second try"])
-        XCTAssertEqual(reprocess.decisions, [.type, .type, .type])
+        XCTAssertEqual(reprocess.steps, ["decision:type", "pasted", "teardown"])
 
         // A later failed recording starts unmarked.
         center.retain(samples: self.samples, error: .timeout, configuration: self.configuration)
@@ -550,5 +624,13 @@ final class GrokSTTRetryCenterTests: XCTestCase {
         let center = self.makeCenter()
         center.noteEmptyResult(isNormalRoute: true, wasEdit: false, wasCommand: false, wasPromptTest: false, wasCancelled: false)
         XCTAssertNil(center.pending)
+    }
+
+    func testReprocessWithoutARetryIsUnrestricted() {
+        // Upstream's own "reprocess last dictation" passes no delivery.
+        let delivery = GrokSTTRecoveredDelivery.unrestricted
+        XCTAssertEqual(delivery.decision(for: "text"), .type)
+        XCTAssertTrue(delivery.allowsOutput("text"))
+        XCTAssertFalse(delivery.isSuperseded)
     }
 }
