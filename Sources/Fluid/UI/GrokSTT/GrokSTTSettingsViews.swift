@@ -123,6 +123,7 @@ struct GrokSTTCredentialsPanel: View {
             }
 
             self.note(GrokSTTSettingsCopy.clientKeyDeviation)
+            self.note(GrokSTTSettingsCopy.meetingLanguageFallback)
         }
         .padding(.top, 4)
         .onAppear { self.refreshCLIStatus() }

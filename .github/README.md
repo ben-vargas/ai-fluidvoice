@@ -11,7 +11,7 @@ For everything that isn't covered here (features, settings, local models, buildi
 | | Upstream FluidVoice | FluidVoice Plus |
 | --- | --- | --- |
 | Speech engines | On-device only (Parakeet, Nemotron, Cohere, Qwen3, Apple Speech, Whisper) | All of those, plus **Grok Speech (xAI)** as an opt-in cloud engine |
-| Where audio goes | Stays on your Mac | Stays on your Mac, unless you select Grok Speech. Then dictation, file, meeting and local-API audio is sent to xAI. |
+| Where audio goes | Stays on your Mac | Stays on your Mac, unless you select Grok Speech. Then dictation, file, meeting and local-API audio is sent to xAI (meetings only in a language Grok supports). |
 | App name and bundle ID | FluidVoice, `com.FluidApp.app` | FluidVoice Plus, `com.FluidApp.app.plus`. It installs next to the official app, with its own settings and permissions. |
 | Analytics | PostHog key included | PostHog key removed from the build, so no usage analytics are sent |
 | Updates | Built-in updater installs upstream releases | Updated by rebuilding from this branch. The built-in updater can't replace FluidVoice Plus, because upstream releases have a different signing team and bundle ID. Turn off automatic update checks in Settings to hide the offers. |
@@ -21,7 +21,7 @@ For everything that isn't covered here (features, settings, local models, buildi
 Pick **Grok Speech (xAI)** under Voice Engine. It is never a default or an onboarding suggestion.
 
 - **Live dictation** streams over xAI's WebSocket, with interim text in the preview. When you stop, it waits for xAI's final transcript. If the socket fails, the whole recording is uploaded once over REST.
-- **Files, meetings and the local API** use xAI's REST endpoint. Meetings get the final Grok transcript; speaker labels still come from the local diarizer, and live meeting captions still use the local engine.
+- **Files, meetings and the local API** use xAI's REST endpoint. Meetings get the final Grok transcript when the meeting's language is one Grok supports; a meeting in any other language is transcribed on your Mac by the local engine, as in upstream. For Grok meetings, speaker labels still come from the local diarizer, and live meeting captions still use the local engine.
 - **The same pipeline as every other engine.** Grok text goes through filler removal, Custom Dictionary, spoken punctuation, AI cleanup styles, history and typing, exactly like a local model. Custom Dictionary terms are also sent to xAI as keyterms, which helps with names.
 - **Two ways to sign in, chosen under the Grok row.** You can use the **xAI API key** saved under AI Providers (pay-as-you-go API billing), or your **Grok CLI session** (`~/.grok/auth.json`, read-only, refreshed with the `grok` CLI). FluidVoice Plus never switches between them on its own, so billing never changes silently.
 - **Failed dictations aren't lost.** The audio is kept in memory for 15 minutes behind a Retry / Dismiss panel.

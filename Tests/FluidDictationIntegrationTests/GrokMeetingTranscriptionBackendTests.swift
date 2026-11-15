@@ -48,25 +48,49 @@ final class GrokMeetingTranscriptionBackendTests: XCTestCase {
         XCTAssertTrue(backend is GrokMeetingTranscriptionBackend)
     }
 
-    func testRedoOffersOnlyLanguagesGrokAcceptsWhileGrokIsSelected() {
+    func testGrokTakesOnlyMeetingsInItsLanguagesWhileSelected() {
+        XCTAssertTrue(GrokMeetingTranscriptionBackend.handles(languageCode: "en", selectedModel: .grokSTT))
+        XCTAssertTrue(GrokMeetingTranscriptionBackend.handles(languageCode: "de", selectedModel: .grokSTT))
+        // Parakeet transcribes Ukrainian and Bulgarian; Grok does not, so those meetings stay local.
+        XCTAssertFalse(GrokMeetingTranscriptionBackend.handles(languageCode: "uk", selectedModel: .grokSTT))
+        XCTAssertFalse(GrokMeetingTranscriptionBackend.handles(languageCode: "bg", selectedModel: .grokSTT))
+        XCTAssertFalse(GrokMeetingTranscriptionBackend.handles(languageCode: "", selectedModel: .grokSTT))
+        // Another engine never routes a meeting to xAI.
+        XCTAssertFalse(GrokMeetingTranscriptionBackend.handles(languageCode: "en", selectedModel: .parakeetTDT))
+        XCTAssertFalse(GrokMeetingTranscriptionBackend.handles(languageCode: "en", selectedModel: .fluidParakeetPro))
+    }
+
+    func testPipelineRoutesByMeetingLanguageWhileGrokIsSelected() async {
         let settings = SettingsStore.shared
-        let previous = settings.selectedSpeechModel
-        defer { settings.selectedSpeechModel = previous }
-
+        let previousModel = settings.selectedSpeechModel
+        let previousBackend = settings.meetingTranscriptionBackendID
+        defer {
+            settings.selectedSpeechModel = previousModel
+            settings.meetingTranscriptionBackendID = previousBackend
+        }
         settings.selectedSpeechModel = .grokSTT
-        let grokChoices = Set(MeetingRetranscriptionLanguage.choices.map(\.id))
-        XCTAssertFalse(grokChoices.isEmpty)
-        XCTAssertTrue(grokChoices.isSubset(of: Set(GrokSTTLanguage.codes)))
-        XCTAssertTrue(grokChoices.isSuperset(of: ["en", "de", "nl"]))
-        XCTAssertNil(MeetingRetranscriptionLanguage.canonicalCode("uk"))
-        XCTAssertEqual(MeetingRetranscriptionLanguage.canonicalCode("de"), "de")
-        XCTAssertFalse(MeetingRetranscriptionLanguage.canRetranscribe(selection: "uk", currentLanguageCode: "en"))
-        // A meeting already transcribed in a language Grok lacks still shows its name.
-        XCTAssertEqual(MeetingRetranscriptionLanguage.displayName(for: "uk"), "Ukrainian")
+        settings.meetingTranscriptionBackendID = .productionDefault
 
-        settings.selectedSpeechModel = .parakeetTDT
-        XCTAssertEqual(MeetingRetranscriptionLanguage.canonicalCode("uk"), "uk")
-        XCTAssertTrue(MeetingRetranscriptionLanguage.choices.contains { $0.id == "uk" })
+        // The local backend prepares its diarizer first; the Grok backend never does.
+        let localMarker = CocoaError(.userCancelled)
+        var localPreparations = 0
+        let pipeline = MeetingProcessingPipeline(
+            asrServiceProvider: { XCTFail("A meeting in a language Grok lacks must not use the selected engine"); return ASRService() },
+            managesModelResidency: false,
+            prepareDiarizationModel: { localPreparations += 1; throw localMarker },
+            preferredASRModelProvider: { .fluidParakeetPro }
+        )
+        do {
+            _ = try await pipeline.process(
+                session: self.makeRequest(languageCode: "uk").session,
+                sessionDirectory: FileManager.default.temporaryDirectory,
+                progress: { _ in }
+            )
+            XCTFail("Expected the local preparation marker")
+        } catch {
+            XCTAssertEqual(error as? CocoaError, localMarker)
+        }
+        XCTAssertEqual(localPreparations, 1)
     }
 
     // MARK: - Fixtures

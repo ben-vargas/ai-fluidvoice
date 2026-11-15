@@ -1408,8 +1408,8 @@ final class MeetingProcessingPipeline: MeetingProcessingControlling {
             let registryDefault = backendRegistry.defaultBackendID
             self.backendIDProvider = { _ in registryDefault }
         } else {
-            self.backendIDProvider = { _ in
-                if SettingsStore.shared.selectedSpeechModel == .grokSTT { return .grokSTT }
+            self.backendIDProvider = { languageCode in
+                if GrokMeetingTranscriptionBackend.handles(languageCode: languageCode) { return .grokSTT }
                 return SettingsStore.shared.meetingTranscriptionBackendID.forNewMeetingAttempt
             }
         }

@@ -2,7 +2,8 @@ import Foundation
 
 extension MeetingBackendID {
     /// Grok Speech (xAI) through the in-pipeline workflow, which transcribes with the
-    /// selected voice engine. Chosen automatically while Grok is the selected engine.
+    /// selected voice engine. Chosen automatically while Grok is the selected engine and
+    /// the meeting's language is one Grok accepts.
     static let grokSTT = MeetingBackendID(rawValue: "hosted-grok-stt-legacy-v1")
 }
 
@@ -31,11 +32,20 @@ final class GrokMeetingTranscriptionBackend: MeetingTranscriptionBackend {
         Self.descriptor
     }
 
-    /// While Grok is the selected engine a redo runs on this backend, so the redo dialog must
-    /// only offer languages `plan` accepts. Any other engine leaves upstream's choices alone.
-    static func acceptsRedoLanguage(_ languageCode: String) -> Bool {
-        guard SettingsStore.shared.selectedSpeechModel == .grokSTT else { return true }
-        return GrokSTTLanguage.normalized(languageCode) != nil
+    /// Grok takes a meeting only while it is the selected engine and it accepts the meeting's
+    /// language. Every other meeting stays with upstream's local backend, the one a Mac without
+    /// Grok would use, so a language Grok lacks never fails a meeting and never sends its audio out.
+    static func handles(languageCode: String) -> Bool {
+        self.handles(languageCode: languageCode, selectedModel: SettingsStore.shared.selectedSpeechModel)
+    }
+
+    nonisolated static func handles(languageCode: String, selectedModel: SettingsStore.SpeechModel) -> Bool {
+        guard selectedModel == .grokSTT else { return false }
+        guard GrokSTTLanguage.normalized(languageCode) != nil else {
+            GrokSTTLog.info("Meeting language \(languageCode) is not a Grok language; transcribing this meeting on this Mac")
+            return false
+        }
+        return true
     }
 
     private let legacyExecutor: MeetingLegacyBackendExecutor

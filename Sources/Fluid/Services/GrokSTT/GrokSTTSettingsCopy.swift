@@ -8,6 +8,9 @@ nonisolated enum GrokSTTSettingsCopy {
         "Live cloud dictation from xAI. Dictation, file and meeting audio is sent to xAI (api.x.ai/v1/stt), " +
         "so this is opt-in and not local-first."
 
+    static let meetingLanguageFallback =
+        "Meetings in a language Grok doesn't support are transcribed on this Mac instead."
+
     static let apiKeyConfigured = "Using the xAI key saved under AI Providers."
     static let apiKeyMissing = "No xAI key yet. Add one under AI Providers (AI Enhancement), then come back to activate."
 
