@@ -77,7 +77,8 @@ final class GrokMeetingNemotronBackend: MeetingTranscriptionBackend {
         modelLocator: any MeetingNemotronModelLocating = MeetingNemotronModelLocator(),
         materializer: any MeetingEpochAudioMaterializing = MeetingEpochAudioMaterializer(),
         transcriber: GrokMeetingASRSession.Transcriber? = nil,
-        keyterms: @escaping @Sendable () async -> [String] = { await GrokSTTKeytermBuilder.terms() }
+        keyterms: @escaping @Sendable () async -> [String] = { await GrokSTTKeytermBuilder.terms() },
+        maxRequestSamples: Int? = nil
     ) {
         let failures = GrokMeetingUploadFailures()
         self.failures = failures
@@ -87,7 +88,8 @@ final class GrokMeetingNemotronBackend: MeetingTranscriptionBackend {
                     local: try localRuntimeFactory(request),
                     transcriber: transcriber ?? GrokMeetingASRSession.restTranscriber(),
                     keyterms: keyterms,
-                    failures: failures
+                    failures: failures,
+                    maxRequestSamples: maxRequestSamples
                 )
             },
             modelLocator: modelLocator,
@@ -164,17 +166,20 @@ final nonisolated class GrokMeetingRuntime: MeetingParakeetNemotronRunning {
     private let transcriber: GrokMeetingASRSession.Transcriber
     private let keyterms: @Sendable () async -> [String]
     private let failures: GrokMeetingUploadFailures
+    private let maxRequestSamples: Int?
 
     init(
         local: any MeetingParakeetNemotronRunning,
         transcriber: @escaping GrokMeetingASRSession.Transcriber,
         keyterms: @escaping @Sendable () async -> [String],
-        failures: GrokMeetingUploadFailures
+        failures: GrokMeetingUploadFailures,
+        maxRequestSamples: Int? = nil
     ) {
         self.local = local
         self.transcriber = transcriber
         self.keyterms = keyterms
         self.failures = failures
+        self.maxRequestSamples = maxRequestSamples
     }
 
     func speakerVoiceProfiles(samples: [MeetingSpeakerVoiceSamples]) async throws -> [MeetingSpeakerVoiceProfile] {
@@ -194,13 +199,15 @@ final nonisolated class GrokMeetingRuntime: MeetingParakeetNemotronRunning {
         configuration: MeetingFinalProcessingConfiguration,
         body: @escaping @Sendable (any MeetingParakeetASRSession) async throws -> MeetingParakeetPhaseResult
     ) async throws -> MeetingParakeetPhaseResult {
-        let session = GrokMeetingASRSession(
+        var session = GrokMeetingASRSession(
             languageCode: GrokSTTLanguage.normalized(configuration.languageCode),
             keyterms: await self.keyterms(),
             transcriber: self.transcriber,
             failures: self.failures
         )
-        return try await body(session)
+        if let maxRequestSamples = self.maxRequestSamples { session.maxRequestSamples = maxRequestSamples }
+        let prepared = session
+        return try await body(prepared)
     }
 }
 
@@ -243,6 +250,7 @@ nonisolated struct GrokMeetingASRSession: MeetingParakeetASRSession {
         let chunk = max(sampleRate, self.maxRequestSamples)
         var texts: [String] = []
         var words: [ASRWordTiming] = []
+        var hasUntimedText = false
         var offset = 0
         while offset < samples.count {
             try Task.checkCancellation()
@@ -251,6 +259,7 @@ nonisolated struct GrokMeetingASRSession: MeetingParakeetASRSession {
             let shift = Double(offset) / Double(sampleRate)
             let limit = Double(end) / Double(sampleRate)
             if !part.text.isEmpty { texts.append(part.text) }
+            if !part.text.isEmpty, part.words.isEmpty { hasUntimedText = true }
             for word in part.words {
                 // Keep each word inside the audio it came from, and in order.
                 let start = min(max(shift + word.start, shift), limit)
@@ -258,6 +267,13 @@ nonisolated struct GrokMeetingASRSession: MeetingParakeetASRSession {
                 words.append(ASRWordTiming(text: word.text, start: start, end: finish))
             }
             offset = end
+        }
+        // Upstream builds its units from the words alone whenever there are any. If one request
+        // came back as text without timings, its text would vanish, so give up the timings of the
+        // whole epoch instead: upstream then keeps all of the text as one utterance over the epoch.
+        if hasUntimedText {
+            GrokSTTLog.info("meeting_asr untimed text; using one utterance for this stretch")
+            words = []
         }
         return (await ASRTranscriptionResult(text: texts.joined(separator: " ")), words)
     }

@@ -696,8 +696,14 @@ final class GrokMeetingNemotronBackendTests: XCTestCase {
     // MARK: Routing
 
     func testGrokUsesTheCanonicalBackendWhereverItCanRun() {
-        XCTAssertEqual(GrokMeetingBackends.backendID(languageCode: "en", selectedModel: .grokSTT), .grokSTTNemotron)
-        XCTAssertEqual(GrokMeetingBackends.backendID(languageCode: "uk", selectedModel: .grokSTT), .grokSTTNemotron)
+        // The canonical backend needs the local Nemotron model, which is Apple Silicon only.
+        #if arch(arm64)
+        let canonical = MeetingBackendID.grokSTTNemotron
+        #else
+        let canonical = MeetingBackendID.grokSTT
+        #endif
+        XCTAssertEqual(GrokMeetingBackends.backendID(languageCode: "en", selectedModel: .grokSTT), canonical)
+        XCTAssertEqual(GrokMeetingBackends.backendID(languageCode: "uk", selectedModel: .grokSTT), canonical)
         // A Grok language upstream's canonical pipeline does not know keeps the in-pipeline workflow.
         XCTAssertEqual(GrokMeetingBackends.backendID(languageCode: "ja", selectedModel: .grokSTT), .grokSTT)
         // A language Grok lacks, or another engine, leaves the meeting to upstream.
@@ -724,6 +730,7 @@ final class GrokMeetingNemotronBackendTests: XCTestCase {
         XCTAssertEqual(backend.descriptor.supportedFinalPrecisions, [.word, .utterance])
     }
 
+    #if arch(arm64)
     func testAGrokMeetingPreparesTheSpeakerModelBeforePlanning() async {
         let settings = SettingsStore.shared
         let previous = settings.selectedSpeechModel
@@ -751,6 +758,7 @@ final class GrokMeetingNemotronBackendTests: XCTestCase {
         }
         XCTAssertEqual(preparations, 1)
     }
+    #endif
 
     // MARK: Plan and execute
 
@@ -878,6 +886,53 @@ final class GrokMeetingNemotronBackendTests: XCTestCase {
         XCTAssertEqual(output.words.map(\.end), [2, 5, 7, 8])
     }
 
+    func testSessionGivesUpTimingsWhenAnyRequestCameBackUntimedSoNoTextIsLost() async throws {
+        let uploads = Uploads()
+        var session = self.makeASRSession { samples, _, _ in
+            let index = uploads.record(sampleCount: samples.count, languageCode: nil, keyterms: [])
+            return index == 1
+                ? GrokSTTRESTTranscript(text: "timed part", words: [ASRWordTiming(text: "timed", start: 0, end: 1), ASRWordTiming(text: "part", start: 1, end: 2)])
+                : GrokSTTRESTTranscript(text: "untimed part", words: [])
+        }
+        session.maxRequestSamples = 5 * 16_000
+        let output = try await session.transcribeWithTimings([Float](repeating: 0, count: 8 * 16_000))
+        XCTAssertEqual(output.result.text, "timed part untimed part")
+        XCTAssertTrue(output.words.isEmpty, "Words from one request alone would make upstream drop the other's text")
+    }
+
+    func testAMixedTimedAndUntimedEpochKeepsAllItsTextThroughAssembly() async throws {
+        let chunk = self.makeChunk(start: 100, end: 108)
+        let track = self.makeMicTrack(chunks: [chunk])
+        let session = self.makeSession(tracks: [track])
+        let uploads = Uploads()
+        let backend = self.makeBackend(local: FakeLocalRuntime(), maxRequestSamples: 5 * 16_000, transcriber: { samples, languageCode, keyterms in
+            let index = uploads.record(sampleCount: samples.count, languageCode: languageCode, keyterms: keyterms)
+            return index == 1
+                ? GrokSTTRESTTranscript(text: "first half", words: [ASRWordTiming(text: "first", start: 0, end: 1), ASRWordTiming(text: "half", start: 1, end: 2)])
+                : GrokSTTRESTTranscript(text: "second half", words: [])
+        })
+        let plan = try backend.plan(self.makeRequest(session: session))
+        let manifest = try MeetingAnalysisManifestBuilder(
+            plan: plan,
+            observer: FixtureObserver(results: [MeetingAnalysisChunkKey(trackID: track.id, chunkID: chunk.id): self.makeObserved(chunk, duration: 8)]),
+            analysisSampleRate: 16_000
+        ).build()
+
+        let outcome = try await backend.execute(plan: plan, manifest: manifest, progress: { _ in })
+        guard case let .canonicalEvidence(bundle) = outcome else { return XCTFail("Expected canonical evidence") }
+        XCTAssertEqual(uploads.all.count, 2)
+        XCTAssertEqual(bundle.evidence.units.map(\.text), ["first half second half"])
+        XCTAssertEqual(bundle.evidence.units.first?.precision, .utterance)
+
+        let assembly = try MeetingTranscriptAssembler().assemble(MeetingAssemblyInput(
+            plan: plan,
+            manifest: manifest,
+            evidence: bundle.evidence,
+            coverageReceipts: bundle.coverageReceipts
+        ))
+        XCTAssertEqual(assembly.segments.map(\.text).joined(separator: " "), "first half second half")
+    }
+
     func testSessionTreatsSilenceAsEmptyAndRetriesWhatWaitingCanFix() async throws {
         let failures = GrokMeetingUploadFailures()
         var calls = 0
@@ -987,6 +1042,7 @@ final class GrokMeetingNemotronBackendTests: XCTestCase {
     private func makeBackend(
         local: FakeLocalRuntime,
         locator: any MeetingNemotronModelLocating = StubLocator(),
+        maxRequestSamples: Int? = nil,
         transcriber: @escaping GrokMeetingASRSession.Transcriber
     ) -> GrokMeetingNemotronBackend {
         GrokMeetingNemotronBackend(
@@ -994,7 +1050,8 @@ final class GrokMeetingNemotronBackendTests: XCTestCase {
             modelLocator: locator,
             materializer: FakeMaterializer(),
             transcriber: transcriber,
-            keyterms: { ["FluidVoice"] }
+            keyterms: { ["FluidVoice"] },
+            maxRequestSamples: maxRequestSamples
         )
     }
 
