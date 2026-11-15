@@ -73,6 +73,8 @@ final class GrokMeetingTranscriptionBackendTests: XCTestCase {
         }
         settings.selectedSpeechModel = .grokSTT
         settings.meetingTranscriptionBackendID = .productionDefault
+        GrokSTTSavedEngine.isFollowed = true
+        defer { GrokSTTSavedEngine.isFollowed = false }
 
         // The local backend prepares its diarizer first; the Grok backend never does.
         let localMarker = CocoaError(.userCancelled)
@@ -628,6 +630,16 @@ final class GrokMeetingLiveRecognizerTests: XCTestCase {
         defer { settings.selectedSpeechModel = previous }
 
         settings.selectedSpeechModel = .grokSTT
+        // Under XCTest the saved engine is not followed unless a test asks: upstream's meeting
+        // tests start real coordinators, and must never reach xAI because of this Mac's settings.
+        XCTAssertFalse(GrokSTTSavedEngine.isFollowed)
+        XCTAssertFalse(GrokMeetingCaptions.areSelected(languageCode: "en"))
+        XCTAssertNil(GrokMeetingCaptions.recognizer(languageCode: "en"))
+        XCTAssertNil(GrokMeetingBackends.backendIDForSavedEngine(languageCode: "en", selectedModel: .grokSTT))
+
+        GrokSTTSavedEngine.isFollowed = true
+        defer { GrokSTTSavedEngine.isFollowed = false }
+        XCTAssertNotNil(GrokMeetingBackends.backendIDForSavedEngine(languageCode: "en", selectedModel: .grokSTT))
         XCTAssertTrue(GrokMeetingCaptions.isGrokSelected, "The key must match the one SettingsStore saves under")
         XCTAssertTrue(GrokMeetingCaptions.areSelected(languageCode: "en"))
         XCTAssertTrue(GrokMeetingCaptions.areSelected(languageCode: "uk"))
@@ -736,6 +748,8 @@ final class GrokMeetingNemotronBackendTests: XCTestCase {
         let previous = settings.selectedSpeechModel
         defer { settings.selectedSpeechModel = previous }
         settings.selectedSpeechModel = .grokSTT
+        GrokSTTSavedEngine.isFollowed = true
+        defer { GrokSTTSavedEngine.isFollowed = false }
 
         // Only backends that diarize with Nemotron reach this preparation step.
         let marker = CocoaError(.userCancelled)

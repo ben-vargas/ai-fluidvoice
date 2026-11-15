@@ -1,5 +1,21 @@
 import AVFoundation
 import Foundation
+import os
+
+/// Whether meetings may pick Grok because it is the saved voice engine.
+///
+/// Always true in the app. Unit tests run inside the Debug app and read its real settings, so with
+/// Grok selected there, upstream's own meeting tests would open caption sockets and upload fixture
+/// audio to xAI under the user's sign-in. Under XCTest this therefore starts false, and a test that
+/// means to exercise Grok's choice turns it on for its own duration.
+nonisolated enum GrokSTTSavedEngine {
+    private static let followed = OSAllocatedUnfairLock(initialState: NSClassFromString("XCTestCase") == nil)
+
+    static var isFollowed: Bool {
+        get { self.followed.withLock { $0 } }
+        set { self.followed.withLock { $0 = newValue } }
+    }
+}
 
 /// The part of a Grok streaming session that meeting captions use. `GrokSTTWebSocketSession` is
 /// the production one; tests use a fake.
@@ -23,7 +39,8 @@ nonisolated enum GrokMeetingCaptions {
     static let selectedSpeechModelDefaultsKey = "SelectedSpeechModel"
 
     static var isGrokSelected: Bool {
-        UserDefaults.standard.string(forKey: self.selectedSpeechModelDefaultsKey) == SettingsStore.SpeechModel.grokSTT.rawValue
+        GrokSTTSavedEngine.isFollowed
+            && UserDefaults.standard.string(forKey: self.selectedSpeechModelDefaultsKey) == SettingsStore.SpeechModel.grokSTT.rawValue
     }
 
     /// Grok captions a meeting only while it is the selected engine and it accepts the meeting's

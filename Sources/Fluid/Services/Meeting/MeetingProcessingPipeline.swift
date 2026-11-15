@@ -1410,7 +1410,7 @@ final class MeetingProcessingPipeline: MeetingProcessingControlling {
         } else {
             self.backendIDProvider = { languageCode in
                 let engine = SettingsStore.shared.selectedSpeechModel
-                if let grok = GrokMeetingBackends.backendID(languageCode: languageCode, selectedModel: engine) { return grok }
+                if let grok = GrokMeetingBackends.backendIDForSavedEngine(languageCode: languageCode, selectedModel: engine) { return grok }
                 return SettingsStore.shared.meetingTranscriptionBackendID.forNewMeetingAttempt
             }
         }

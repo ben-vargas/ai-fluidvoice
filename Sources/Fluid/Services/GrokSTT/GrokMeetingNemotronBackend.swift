@@ -23,6 +23,12 @@ nonisolated enum GrokMeetingBackends {
         return .grokSTT
     }
 
+    /// The pipeline's question: the backend for the saved voice engine, where that may be followed.
+    static func backendIDForSavedEngine(languageCode: String, selectedModel: SettingsStore.SpeechModel) -> MeetingBackendID? {
+        guard GrokSTTSavedEngine.isFollowed else { return nil }
+        return self.backendID(languageCode: languageCode, selectedModel: selectedModel)
+    }
+
     /// The canonical pipeline prepares the Nemotron model, and trusts text-overlap echo verdicts,
     /// only for backends it knows diarize with Nemotron.
     static func diarizesWithNemotron(_ id: MeetingBackendID) -> Bool {

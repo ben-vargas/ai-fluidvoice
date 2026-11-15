@@ -76,6 +76,8 @@ The test files live in `Tests/FluidDictationIntegrationTests/GrokSTT*Tests.swift
 - New: dictation controller (frame accounting, backpressure, handoff, REST fallback, generations,
   cancellation) and language/settings.
 
-Upstream's tests run inside the FluidVoice Debug app and read its saved settings. Two
-`MeetingTranscriptionBackendTests` cases expect the local meeting backend, so they fail while Grok is
-the selected engine in FluidVoice Debug. Select a local engine there before running the suite.
+Upstream's tests run inside the FluidVoice Debug app and read its saved settings, and many of them
+start real meeting coordinators and pipelines. So that Grok being the selected engine in FluidVoice
+Debug can never make those tests open caption sockets or upload fixture audio to xAI,
+`GrokSTTSavedEngine.isFollowed` starts false under XCTest: meetings then ignore the saved engine. A
+test that means to exercise Grok's choice sets it to true for its own duration.
