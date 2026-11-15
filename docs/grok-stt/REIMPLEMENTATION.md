@@ -19,7 +19,7 @@ AI cleanup styles and prompts, history, and typing into the focused field.
 | --- | --- |
 | Dictation preview | ASRService already polls `transcribeStreaming(fullBuffer)` on a timer. `GrokSTTDictationController` turns each poll into a push: it sends only the 100 ms frames the socket has not seen, then returns the socket's live transcript. |
 | Dictation stop | `transcribeFinal` sends the remainder, sends `audio.done`, and waits for `transcript.done`. Interim text is never treated as final. If the socket times out, drops, or returns nothing before `transcript.done`, the whole recording is uploaded once over REST. |
-| Dictation failure | `GrokSTTRetryCenter` keeps the audio in memory for 15 minutes and shows a Retry / Dismiss panel. A retry re-uploads over REST, applies local cleanup, and shows the text with a Copy button. It never types on its own, because the failed recording may have been an Edit, Command or prompt-test capture that only ContentView knows how to route. Dismissing, or starting a new recording, cancels a retry in flight. |
+| Dictation failure | `GrokSTTRetryCenter` keeps the audio in memory for 15 minutes and shows a Retry / Dismiss panel. A retry re-uploads over REST and applies local cleanup. If the failed recording was an ordinary dictation, the text then finishes through ContentView's `reprocessDictationText`, the same path as upstream's "reprocess last dictation": AI cleanup for the primary shortcut, history, and typing into the field that has focus when the retry succeeds. ContentView marks those recordings (`markPendingAsPlainDictation`). An Edit, Command, prompt-test, cancelled or onboarding capture is never marked, so its text is only shown with a Copy button. Dismissing, or starting a new recording, cancels a retry in flight. |
 | Files | `prefersNativeFileTranscription` sends WAV, MP3, M4A, AAC, FLAC, OGG and Opus files to REST as-is. Other formats are decoded to 16 kHz mono and uploaded as WAV, in requests of up to 20 minutes. The local API uses the same paths. |
 | Meetings | Upstream's default meeting backend always uses local Parakeet. While Grok is selected and the meeting's language is one Grok accepts, `MeetingProcessingPipeline` picks `GrokMeetingTranscriptionBackend` (`hosted-grok-stt-legacy-v1`). A meeting in any other language stays with upstream's local backend (`GrokMeetingTranscriptionBackend.handles`), so it is transcribed on the Mac and its audio is not uploaded; this covers new meetings, retries and Redo transcript alike. That backend runs the same in-pipeline workflow as the legacy backend, which transcribes with the selected engine, but it declares Grok's languages instead of English only. Meeting chunks are CAF, so they go through the decode-to-WAV path. `MeetingProviderLanguagePin` pins Grok to the meeting's language for the run. Speaker labels still come from the local diarizer. |
 | Credentials | API key mode reuses the xAI key saved under AI Providers. Grok CLI session mode reads `~/.grok/auth.json` read-only and refreshes it by running `grok`. Until the user picks a mode, Grok uses the xAI key if one is saved, otherwise a Grok CLI session if one is on disk. `prepare` saves that choice, so adding a key later never moves a CLI user onto API billing. `prepare` only checks that the selected sign-in exists. Resolving and refreshing happen per request, so a failure keeps the recording for Retry. Errors never switch modes. The sign-in options open under the Grok row, and the list scrolls to them. |
@@ -35,6 +35,8 @@ Everything else lives in new files under `Sources/Fluid/Services/GrokSTT/`,
   the generic `LiveSessionTranscriptionProvider` seam (`recordingSessionWillStart` in `start()`,
   `recordingSessionDidCancel` in `stopWithoutTranscription`).
 - `SpeechModelInstallationSnapshot.swift`: Grok counts as built in.
+- `ContentView.swift`: two lines. One installs `GrokSTTRetryCenter.deliverRecoveredDictation`, next to the other overlay callbacks; one marks a failed ordinary dictation in the empty-result branch.
+- `BackupService.swift` and `SettingsStore.swift`: the optional `grokSTT` backup field, written in `makeBackupPayload` and read in `restore`. It holds the sign-in mode, the CLI path and the language, never a key or token.
 - `Meeting/MeetingProcessingPipeline.swift`: asks `GrokMeetingTranscriptionBackend.handles(languageCode:)` whether Grok takes the meeting, and `MeetingProviderLanguagePin` gets a `.grok` case.
 - `Meeting/Backend/MeetingTranscriptionBackendRegistry.swift`: registers the Grok backend (one line). `MeetingTranscriptionBackendTests` expects it in the default registry.
 - `AISettingsView.swift`, `VoiceEngineSettingsViewModel.swift`, `AISettingsView+SpeechRecognition.swift`:
@@ -76,13 +78,12 @@ To add Grok captions:
 
 ### Other follow-ups
 
-- Send a retried dictation back through ContentView's normal completion (AI cleanup, history, Edit and Command routing). This needs a small upstream hook in ContentView. Until then, a retry only offers the text for copying.
+- Route a retried Edit or Command recording back into its own mode, and apply the secondary shortcut's prompt to a retried secondary dictation. Today those are copy-only and primary-prompt respectively.
 - Move the Grok meeting backend to the canonical-evidence contract (word timings, receipts) once Grok returns word timestamps.
 - Offer Grok-only languages (Japanese, Korean, Hindi and others) for meetings. Upstream's meeting
   language pickers list Parakeet's languages, so those can't be chosen yet.
 - Add Grok to `VoiceEngineLanguageCatalog` and onboarding. Onboarding still never suggests a cloud
   engine, on purpose.
-- Add `grokSTTAuthMode`, `grokCLIBinaryPath` and `selectedGrokSTTLanguageCode` to settings backup.
 - Show a one-time notice before the first cloud upload of a meeting or file.
 - Build keyterms off the main actor if the custom dictionary gets large.
 

@@ -3211,6 +3211,7 @@ struct ContentView: View {
                 }
             }
             if route == .normal, !wasRewriteMode, !wasCommandMode, !promptTest.isActive {
+                GrokSTTRetryCenter.shared.markPendingAsPlainDictation()
                 self.recordEmptyDictationPerformance(startedAt: pipelineStartedAt, asrMs: transcriptionDurationMilliseconds)
             }
             // Finish the same short exit transition even when no text is emitted.
@@ -5141,6 +5142,7 @@ struct ContentView: View {
         NotchContentState.shared.onReprocessLastRequested = {
             self.reprocessLastDictation()
         }
+        GrokSTTRetryCenter.shared.deliverRecoveredDictation = { await self.reprocessDictationText($0) }
         NotchContentState.shared.onCopyLastRequested = {
             self.copyLastDictationFromHistory()
         }

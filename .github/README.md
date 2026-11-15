@@ -24,8 +24,8 @@ Pick **Grok Speech (xAI)** under Voice Engine. It is never a default or an onboa
 - **Files, meetings and the local API** use xAI's REST endpoint. Meetings get the final Grok transcript when the meeting's language is one Grok supports; a meeting in any other language is transcribed on your Mac by the local engine, as in upstream. For Grok meetings, speaker labels still come from the local diarizer, and live meeting captions still use the local engine.
 - **The same pipeline as every other engine.** Grok text goes through filler removal, Custom Dictionary, spoken punctuation, AI cleanup styles, history and typing, exactly like a local model. Custom Dictionary terms are also sent to xAI as keyterms, which helps with names.
 - **Two ways to sign in, chosen under the Grok row.** You can use the **xAI API key** saved under AI Providers (pay-as-you-go API billing), or your **Grok CLI session** (`~/.grok/auth.json`, read-only, refreshed with the `grok` CLI). FluidVoice Plus never switches between them on its own, so billing never changes silently.
-- **Failed dictations aren't lost.** The audio is kept in memory for 15 minutes behind a Retry / Dismiss panel.
-- **Languages:** Automatic or a fixed language from xAI's supported list.
+- **Failed dictations aren't lost.** The audio is kept in memory for 15 minutes behind a Retry / Dismiss panel. A successful retry of an ordinary dictation is cleaned up, saved to history and typed into the focused field, like any other dictation.
+- **Languages:** Automatic, or one of the 38 languages xAI lists for its speech model.
 
 How it is built, which upstream files it touches, and the deferred work are in [docs/grok-stt/REIMPLEMENTATION.md](../docs/grok-stt/REIMPLEMENTATION.md).
 

@@ -102,3 +102,38 @@ extension SettingsStore {
         }
     }
 }
+
+// MARK: - Settings backup
+
+/// Grok Speech settings carried in a settings backup. Each value is what was saved, so `nil` means
+/// "never set" and a restore leaves this Mac's value alone. No key or session token is ever included.
+nonisolated struct GrokSTTBackupSettings: Codable, Equatable, Sendable {
+    var authMode: String?
+    var cliBinaryPath: String?
+    var languageCode: String?
+}
+
+extension SettingsStore {
+    var grokSTTBackupSettings: GrokSTTBackupSettings {
+        GrokSTTBackupSettings(
+            authMode: UserDefaults.standard.string(forKey: Self.grokSTTAuthModeDefaultsKey),
+            cliBinaryPath: self.grokCLIBinaryPath,
+            languageCode: UserDefaults.standard.string(forKey: Self.grokSTTLanguageDefaultsKey)
+        )
+    }
+
+    /// Restores only values the backup holds and this build understands.
+    func restoreGrokSTT(_ backup: GrokSTTBackupSettings) {
+        if let mode = backup.authMode.flatMap(GrokSTTAuthMode.init(rawValue:)) {
+            self.grokSTTAuthMode = mode
+        }
+        if let path = backup.cliBinaryPath {
+            self.grokCLIBinaryPath = path
+        }
+        if backup.languageCode == GrokSTTLanguage.automaticCode {
+            self.selectedGrokSTTLanguageCode = nil
+        } else if let code = backup.languageCode.flatMap(GrokSTTLanguage.normalized) {
+            self.selectedGrokSTTLanguageCode = code
+        }
+    }
+}

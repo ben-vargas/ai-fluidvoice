@@ -4,6 +4,10 @@ import Foundation
 nonisolated enum GrokSTTSettingsCopy {
     static let badge = "Cloud · Experimental"
 
+    static var languageSupport: String {
+        "\(GrokSTTLanguage.codes.count) Languages (Select or Auto)"
+    }
+
     static let cardDescription =
         "Live cloud dictation from xAI. Dictation, file and meeting audio is sent to xAI (api.x.ai/v1/stt), " +
         "so this is opt-in and not local-first."

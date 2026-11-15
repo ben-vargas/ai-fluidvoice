@@ -151,6 +151,7 @@ struct SettingsBackupPayload: Codable, Equatable {
     // swiftlint:disable:next discouraged_optional_collection
     var dictationPromptConfigurations: [String: SettingsStore.DictationPromptConfiguration]? = nil
     var automaticDictionaryPromptDelay: SettingsStore.AutomaticDictionaryPromptDelay? = nil
+    var grokSTT: GrokSTTBackupSettings? = nil
 }
 
 struct AppBackupDocument: Codable, Equatable {

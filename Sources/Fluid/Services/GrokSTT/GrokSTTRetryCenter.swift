@@ -4,9 +4,10 @@ import SwiftUI
 /// Keeps the audio of the last failed Grok dictation in memory and offers to send it
 /// again. Nothing is written to disk and nothing falls back to a local engine.
 ///
-/// A recovered transcript is shown for the user to copy, never typed automatically:
-/// the failed recording may have been an Edit, Command or prompt-test capture, and
-/// only ContentView knows how to route those.
+/// A recovered transcript of an ordinary dictation goes back through ContentView's normal
+/// finish (AI cleanup, history, typing into the focused field). ContentView says which
+/// recordings those are. Anything else, such as an Edit, Command or prompt-test capture,
+/// is shown for the user to copy and never typed, because only ContentView can route those.
 @MainActor
 final class GrokSTTRetryCenter {
     static let shared = GrokSTTRetryCenter()
@@ -19,7 +20,12 @@ final class GrokSTTRetryCenter {
         let createdAt: Date
         let error: GrokSTTError
         let configuration: GrokSTTDictationController.Configuration
+        /// Set by ContentView once it knows the failed recording was an ordinary dictation.
+        var isPlainDictation = false
     }
+
+    /// Finishes a recovered dictation the way a normal one finishes. ContentView installs it.
+    var deliverRecoveredDictation: (@MainActor (String) async -> Void)?
 
     private(set) var pending: Pending?
     private var expiryTask: Task<Void, Never>?
@@ -28,10 +34,27 @@ final class GrokSTTRetryCenter {
     /// finishes afterwards can tell its result is no longer wanted.
     private var attemptID = UUID()
     private let now: () -> Date
-    private let panel = GrokSTTFailurePanelController()
+    private let transcribe: Transcriber
+    /// `nil` in tests, which have no screen to put a panel on.
+    private let panel: GrokSTTFailurePanelController?
 
-    init(now: @escaping () -> Date = Date.init) {
+    typealias Transcriber = @MainActor ([Float], GrokSTTDictationController.Configuration) async throws -> String
+
+    init(now: @escaping () -> Date = Date.init, transcribe: Transcriber? = nil, showsPanel: Bool = true) {
         self.now = now
+        self.transcribe = transcribe ?? { samples, configuration in
+            try await GrokSTTRESTClient(resolver: GrokSTTCredentialResolver.shared).transcribePCM(
+                samples,
+                languageCode: configuration.languageCode,
+                keyterms: configuration.keyterms
+            )
+        }
+        self.panel = showsPanel ? GrokSTTFailurePanelController() : nil
+    }
+
+    /// The retry in flight, so tests can wait for it.
+    var retryInFlight: Task<Void, Never>? {
+        self.retryTask
     }
 
     var hasPending: Bool {
@@ -43,19 +66,36 @@ final class GrokSTTRetryCenter {
         self.retryTask != nil
     }
 
-    func retain(samples: [Float], error: GrokSTTError, configuration: GrokSTTDictationController.Configuration) {
+    func retain(
+        samples: [Float],
+        error: GrokSTTError,
+        configuration: GrokSTTDictationController.Configuration,
+        isPlainDictation: Bool = false
+    ) {
         self.invalidateAttempt()
         let maxSamples = GrokSTTAudioConverter.sampleRate * Int(Self.maxDuration)
         let kept = samples.count > maxSamples ? Array(samples.prefix(maxSamples)) : samples
-        self.pending = Pending(samples: kept, createdAt: self.now(), error: error, configuration: configuration)
+        self.pending = Pending(
+            samples: kept,
+            createdAt: self.now(),
+            error: error,
+            configuration: configuration,
+            isPlainDictation: isPlainDictation
+        )
         GrokSTTLog.info("retry_retained samples=\(kept.count)")
         self.scheduleExpiry()
-        self.panel.showFailure(
+        self.panel?.showFailure(
             message: error.errorDescription ?? "Grok couldn't transcribe that recording.",
             canRetry: error.isRetryable,
             onRetry: { [weak self] in self?.retry() },
             onDismiss: { [weak self] in self?.clear() }
         )
+    }
+
+    /// ContentView calls this when the recording that just failed was an ordinary dictation:
+    /// not an Edit, Command or prompt-test capture, and not a cancelled or sandboxed one.
+    func markPendingAsPlainDictation() {
+        self.pending?.isPlainDictation = true
     }
 
     /// Drops the kept audio, cancels any retry in flight, and hides the panel.
@@ -64,7 +104,7 @@ final class GrokSTTRetryCenter {
         self.pending = nil
         self.expiryTask?.cancel()
         self.expiryTask = nil
-        self.panel.hide()
+        self.panel?.hide()
     }
 
     func retry() {
@@ -74,16 +114,12 @@ final class GrokSTTRetryCenter {
         }
         let attempt = UUID()
         self.attemptID = attempt
-        self.panel.showRetrying()
+        self.panel?.showRetrying()
         self.retryTask = Task { @MainActor [weak self] in
             let outcome: Result<String, GrokSTTError>
             do {
-                let text = try await GrokSTTRESTClient(resolver: GrokSTTCredentialResolver.shared).transcribePCM(
-                    pending.samples,
-                    languageCode: pending.configuration.languageCode,
-                    keyterms: pending.configuration.keyterms
-                )
-                outcome = .success(text)
+                guard let transcribe = self?.transcribe else { return }
+                outcome = .success(try await transcribe(pending.samples, pending.configuration))
             } catch {
                 outcome = .failure(error as? GrokSTTError ?? GrokSTTTransportErrorMapper.map(error))
             }
@@ -91,19 +127,25 @@ final class GrokSTTRetryCenter {
             self.retryTask = nil
             switch outcome {
             case let .success(text):
-                self.showRecovered(text)
+                self.finishRecovered(text, isPlainDictation: pending.isPlainDictation)
             case .failure(.emptyTranscript), .failure(.invalidAudio):
                 self.clear()
             case let .failure(failure):
                 GrokSTTLog.error("retry_failed error=\(String(describing: failure))")
-                self.retain(samples: pending.samples, error: failure, configuration: pending.configuration)
+                self.retain(
+                    samples: pending.samples,
+                    error: failure,
+                    configuration: pending.configuration,
+                    isPlainDictation: pending.isPlainDictation
+                )
             }
         }
     }
 
-    /// Applies the same local cleanup as a normal dictation and shows the text with a Copy
-    /// button. The audio is no longer needed once the text exists.
-    private func showRecovered(_ rawText: String) {
+    /// Applies the same local cleanup ASRService gives a normal dictation. An ordinary dictation
+    /// then finishes through ContentView; anything else is shown with a Copy button. The audio
+    /// is no longer needed once the text exists.
+    private func finishRecovered(_ rawText: String, isPlainDictation: Bool) {
         let cleaned = ASRService.applySpokenPunctuationFormatting(
             ASRService.applyCustomDictionary(ASRService.removeFillerWords(rawText))
         ).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -111,9 +153,15 @@ final class GrokSTTRetryCenter {
             self.clear()
             return
         }
+        if isPlainDictation, let deliver = self.deliverRecoveredDictation {
+            GrokSTTLog.info("retry_recovered delivering as dictation")
+            self.clear()
+            Task { @MainActor in await deliver(cleaned) }
+            return
+        }
         self.pending = nil
         self.scheduleExpiry()
-        self.panel.showRecovered(
+        self.panel?.showRecovered(
             text: cleaned,
             onCopy: { [weak self] in
                 NSPasteboard.general.clearContents()

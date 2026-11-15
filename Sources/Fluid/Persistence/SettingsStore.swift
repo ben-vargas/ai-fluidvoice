@@ -3886,7 +3886,8 @@ final class SettingsStore: ObservableObject {
             meetingRecordingDefaults: self.meetingRecordingDefaults,
             privateAIIdleUnload: self.privateAIIdleUnload,
             dictationPromptConfigurations: self.dictationPromptConfigurations,
-            automaticDictionaryPromptDelay: self.automaticDictionaryPromptDelay
+            automaticDictionaryPromptDelay: self.automaticDictionaryPromptDelay,
+            grokSTT: self.grokSTTBackupSettings
         )
     }
 
@@ -3929,6 +3930,7 @@ final class SettingsStore: ObservableObject {
         if let selectedAppleSpeechLocaleIdentifier = payload.selectedAppleSpeechLocaleIdentifier {
             self.selectedAppleSpeechLocaleIdentifier = selectedAppleSpeechLocaleIdentifier
         }
+        if let grokSTT = payload.grokSTT { self.restoreGrokSTT(grokSTT) }
         // A backup predating this setting represents an absent selection, which resolves to the
         // current phase's local default. Unknown stored IDs remain intact and visibly unavailable.
         self.meetingTranscriptionBackendID = payload.meetingTranscriptionBackendID.map {
@@ -5432,7 +5434,7 @@ final class SettingsStore: ObservableObject {
             case .appleSpeechAnalyzer: return "EN, ES, FR, DE, IT, JA, KO, PT, ZH"
             case .whisperTiny, .whisperBase, .whisperSmall, .whisperMedium, .whisperLargeTurbo, .whisperLarge:
                 return "99 Languages"
-            case .grokSTT: return "25 Languages (Select or Auto)"
+            case .grokSTT: return GrokSTTSettingsCopy.languageSupport
             }
         }
 

@@ -4,6 +4,7 @@ import XCTest
 final class GrokSTTLanguageTests: XCTestCase {
     func testNormalizedMapsTagalogAndRejectsUnknownCodes() {
         XCTAssertEqual(GrokSTTLanguage.normalized("tl"), "fil")
+        XCTAssertEqual(GrokSTTLanguage.normalized("no"), "nb")
         XCTAssertEqual(GrokSTTLanguage.normalized(" EN "), "en")
         XCTAssertNil(GrokSTTLanguage.normalized("xx"))
         XCTAssertNil(GrokSTTLanguage.normalized(GrokSTTLanguage.automaticCode))
@@ -14,9 +15,61 @@ final class GrokSTTLanguageTests: XCTestCase {
         XCTAssertEqual(GrokSTTLanguage.wireCode("ja"), "ja")
     }
 
-    func testCodesAreUniqueAndCoverTwentyFiveLanguages() {
-        XCTAssertEqual(GrokSTTLanguage.codes.count, 25)
+    func testCodesAreUniqueAndCoverXAIsThirtyEightLanguages() {
+        XCTAssertEqual(GrokSTTLanguage.codes.count, 38)
         XCTAssertEqual(Set(GrokSTTLanguage.codes).count, GrokSTTLanguage.codes.count)
+        XCTAssertTrue(Set(GrokSTTLanguage.codes).isSuperset(of: ["en", "uk", "bg", "fi", "el", "zh", "yue", "nb"]))
+        XCTAssertEqual(GrokSTTSettingsCopy.languageSupport, "38 Languages (Select or Auto)")
+        // Every code needs a name for the language menu.
+        for code in GrokSTTLanguage.codes {
+            XCTAssertNotEqual(GrokSTTLanguage.displayName(for: code), code, "No display name for \(code)")
+        }
+    }
+
+    @MainActor
+    func testBackupCarriesSavedGrokSettingsAndRestoreSkipsWhatItCannotUse() {
+        let defaults = UserDefaults.standard
+        let keys = [
+            SettingsStore.grokSTTAuthModeDefaultsKey,
+            SettingsStore.grokCLIBinaryPathDefaultsKey,
+            SettingsStore.grokSTTLanguageDefaultsKey,
+        ]
+        let saved = keys.map { defaults.object(forKey: $0) }
+        defer {
+            for (key, value) in zip(keys, saved) {
+                if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
+            }
+        }
+        let settings = SettingsStore.shared
+
+        keys.forEach(defaults.removeObject(forKey:))
+        XCTAssertEqual(settings.grokSTTBackupSettings, GrokSTTBackupSettings())
+
+        settings.grokSTTAuthMode = .grokCLISession
+        settings.grokCLIBinaryPath = " /opt/homebrew/bin/grok "
+        settings.selectedGrokSTTLanguageCode = nil
+        let backup = settings.grokSTTBackupSettings
+        XCTAssertEqual(backup, GrokSTTBackupSettings(
+            authMode: "grokCLISession",
+            cliBinaryPath: "/opt/homebrew/bin/grok",
+            languageCode: GrokSTTLanguage.automaticCode
+        ))
+        XCTAssertEqual(settings.makeBackupPayload().grokSTT, backup)
+
+        // The backup survives a JSON round trip, and a backup without the field still decodes.
+        let data = try? JSONEncoder().encode(backup)
+        XCTAssertEqual(data.flatMap { try? JSONDecoder().decode(GrokSTTBackupSettings.self, from: $0) }, backup)
+
+        keys.forEach(defaults.removeObject(forKey:))
+        settings.restoreGrokSTT(backup)
+        XCTAssertEqual(settings.grokSTTBackupSettings, backup)
+
+        // Unknown or absent values leave this Mac's settings alone.
+        settings.selectedGrokSTTLanguageCode = "de"
+        settings.restoreGrokSTT(GrokSTTBackupSettings(authMode: "someFutureMode", cliBinaryPath: nil, languageCode: "xx"))
+        XCTAssertEqual(defaults.string(forKey: SettingsStore.grokSTTAuthModeDefaultsKey), "grokCLISession")
+        XCTAssertEqual(settings.grokCLIBinaryPath, "/opt/homebrew/bin/grok")
+        XCTAssertEqual(settings.selectedGrokSTTLanguageCode, "de")
     }
 
     func testAuthModeDefaultsToAPIKey() {

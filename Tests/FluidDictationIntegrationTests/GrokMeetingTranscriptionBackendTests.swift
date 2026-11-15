@@ -30,10 +30,10 @@ final class GrokMeetingTranscriptionBackendTests: XCTestCase {
         let backend = GrokMeetingTranscriptionBackend(legacyExecutor: { _, _ in
             throw MeetingProcessingError.noRecoverableAudio
         })
-        XCTAssertThrowsError(try backend.plan(self.makeRequest(languageCode: "bg"))) { error in
+        XCTAssertThrowsError(try backend.plan(self.makeRequest(languageCode: "et"))) { error in
             XCTAssertEqual(
                 error as? MeetingBackendError,
-                .unsupportedLanguage(backend: .grokSTT, languageCode: "bg")
+                .unsupportedLanguage(backend: .grokSTT, languageCode: "et")
             )
         }
     }
@@ -51,9 +51,10 @@ final class GrokMeetingTranscriptionBackendTests: XCTestCase {
     func testGrokTakesOnlyMeetingsInItsLanguagesWhileSelected() {
         XCTAssertTrue(GrokMeetingTranscriptionBackend.handles(languageCode: "en", selectedModel: .grokSTT))
         XCTAssertTrue(GrokMeetingTranscriptionBackend.handles(languageCode: "de", selectedModel: .grokSTT))
-        // Parakeet transcribes Ukrainian and Bulgarian; Grok does not, so those meetings stay local.
-        XCTAssertFalse(GrokMeetingTranscriptionBackend.handles(languageCode: "uk", selectedModel: .grokSTT))
-        XCTAssertFalse(GrokMeetingTranscriptionBackend.handles(languageCode: "bg", selectedModel: .grokSTT))
+        XCTAssertTrue(GrokMeetingTranscriptionBackend.handles(languageCode: "uk", selectedModel: .grokSTT))
+        // Parakeet transcribes Estonian and Latvian; Grok does not, so those meetings stay local.
+        XCTAssertFalse(GrokMeetingTranscriptionBackend.handles(languageCode: "et", selectedModel: .grokSTT))
+        XCTAssertFalse(GrokMeetingTranscriptionBackend.handles(languageCode: "lv", selectedModel: .grokSTT))
         XCTAssertFalse(GrokMeetingTranscriptionBackend.handles(languageCode: "", selectedModel: .grokSTT))
         // Another engine never routes a meeting to xAI.
         XCTAssertFalse(GrokMeetingTranscriptionBackend.handles(languageCode: "en", selectedModel: .parakeetTDT))
@@ -82,7 +83,7 @@ final class GrokMeetingTranscriptionBackendTests: XCTestCase {
         )
         do {
             _ = try await pipeline.process(
-                session: self.makeRequest(languageCode: "uk").session,
+                session: self.makeRequest(languageCode: "et").session,
                 sessionDirectory: FileManager.default.temporaryDirectory,
                 progress: { _ in }
             )

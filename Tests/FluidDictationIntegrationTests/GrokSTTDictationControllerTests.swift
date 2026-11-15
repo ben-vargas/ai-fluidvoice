@@ -286,3 +286,82 @@ private final class FakeDictationSession: StreamingTranscriptionSession, @unchec
         self.lock.withLock { self._didCancel = true }
     }
 }
+
+// MARK: - Retry
+
+@MainActor
+final class GrokSTTRetryCenterTests: XCTestCase {
+    private let configuration = GrokSTTDictationController.Configuration(languageCode: "en", keyterms: [])
+    private let samples = [Float](repeating: 0.1, count: 1600)
+
+    func testRecoveredOrdinaryDictationFinishesThroughTheNormalPath() async {
+        var delivered: [String] = []
+        let center = GrokSTTRetryCenter(transcribe: { _, _ in "hello world" }, showsPanel: false)
+        center.deliverRecoveredDictation = { delivered.append($0) }
+
+        center.retain(samples: self.samples, error: .timeout, configuration: self.configuration)
+        center.markPendingAsPlainDictation()
+        center.retry()
+        await center.retryInFlight?.value
+        await Self.settle()
+
+        XCTAssertEqual(delivered.map { $0.lowercased() }, ["hello world"])
+        XCTAssertNil(center.pending)
+        XCTAssertFalse(center.isRetrying)
+    }
+
+    func testRecoveredTextIsNeverTypedUnlessContentViewMarkedTheRecording() async {
+        var delivered: [String] = []
+        let center = GrokSTTRetryCenter(transcribe: { _, _ in "delete everything" }, showsPanel: false)
+        center.deliverRecoveredDictation = { delivered.append($0) }
+
+        // An Edit, Command or prompt-test capture is retained but never marked.
+        center.retain(samples: self.samples, error: .timeout, configuration: self.configuration)
+        center.retry()
+        await center.retryInFlight?.value
+        await Self.settle()
+
+        XCTAssertTrue(delivered.isEmpty)
+        XCTAssertNil(center.pending)
+    }
+
+    func testMarkSurvivesAFailedRetryAndDoesNotLeakIntoTheNextRecording() async {
+        var delivered: [String] = []
+        var attempts = 0
+        let center = GrokSTTRetryCenter(
+            transcribe: { _, _ in
+                attempts += 1
+                if attempts == 1 { throw GrokSTTError.timeout }
+                return "second try"
+            },
+            showsPanel: false
+        )
+        center.deliverRecoveredDictation = { delivered.append($0) }
+
+        center.retain(samples: self.samples, error: .timeout, configuration: self.configuration)
+        center.markPendingAsPlainDictation()
+        center.retry()
+        await center.retryInFlight?.value
+        XCTAssertEqual(center.pending?.isPlainDictation, true, "A failed retry keeps the recording and its mark")
+        center.retry()
+        await center.retryInFlight?.value
+        await Self.settle()
+        XCTAssertEqual(delivered.map { $0.lowercased() }, ["second try"])
+
+        // A later failed recording starts unmarked.
+        center.retain(samples: self.samples, error: .timeout, configuration: self.configuration)
+        XCTAssertEqual(center.pending?.isPlainDictation, false)
+        center.clear()
+    }
+
+    func testMarkingWithNothingRetainedDoesNothing() {
+        let center = GrokSTTRetryCenter(transcribe: { _, _ in "" }, showsPanel: false)
+        center.markPendingAsPlainDictation()
+        XCTAssertNil(center.pending)
+    }
+
+    /// Delivery hops through one more MainActor task after the retry task ends.
+    private static func settle() async {
+        for _ in 0..<5 { await Task.yield() }
+    }
+}
